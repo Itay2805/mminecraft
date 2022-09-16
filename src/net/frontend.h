@@ -41,3 +41,8 @@ err_t frontend_send(connection_t* connection, uint8_t* buffer, int32_t size);
  * not in play mode is disconnected
  */
 err_t frontend_accept();
+
+/**
+ * get the max player count
+ */
+int frontend_get_max_player_count();

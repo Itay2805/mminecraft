@@ -2,9 +2,11 @@
 #include "protocol.h"
 #include "frontend.h"
 
-#include <stdint.h>
-#include <malloc.h>
+#include <json-c/json.h>
+
 #include <sys/socket.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 // TODO: autogenerate
@@ -48,6 +50,7 @@ int get_total_connections_count() {
 static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, size_t size) {
     err_t err = NO_ERROR;
     void* buffer_start = (void*)buffer;
+    json_object* root = NULL;
 
     // all packets in game have an id of less than one, so make sure the id
     // is always one and take it (essentially ignoring the fact its a varint)
@@ -93,6 +96,49 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
                 case 0x00: {
                     PCHECK(size == 0);
 
+                    //
+                    // create the root object
+                    //
+                    root = json_object_new_object();
+                    CHECK_ERRNO(root != NULL);
+
+                    // create the version field
+                    json_object* version = json_object_new_object();
+                    json_object_object_add(version, "name", json_object_new_string("1.16.5"));
+                    json_object_object_add(version, "protocol", json_object_new_int(PROTOCOL_VERSION));
+                    json_object_object_add(root, "version", version);
+
+                    json_object* players = json_object_new_object();
+                    json_object_object_add(players, "max", json_object_new_int(frontend_get_max_player_count()));
+                    json_object_object_add(players, "online", json_object_new_int(m_player_connections_count));
+                    json_object_object_add(root, "players", players);
+
+                    json_object* description = json_object_new_object();
+                    json_object_object_add(description, "text", json_object_new_string("hello world!"));
+                    json_object_object_add(root, "description", description);
+
+                    //
+                    // get the final json
+                    //
+                    size_t json_len = 0;
+                    const char* str = json_object_to_json_string_length(root, 0, &json_len);
+                    CHECK_ERRNO(str != NULL);
+
+                    // allocate it
+                    size_t rlen = json_len + varint_size((int32_t)json_len) + 1;
+                    void* rbuffer = malloc(rlen);
+                    uint8_t* rbuffer_ptr = rbuffer;
+
+                    // set the response id
+                    *rbuffer_ptr++ = 0x00;
+
+                    // write the length and string itself
+                    rbuffer_ptr += varint_write(json_len, rbuffer_ptr);
+                    memcpy(rbuffer_ptr, str, json_len);
+
+                    // send it
+                    CHECK_AND_RETHROW(frontend_send(connection, rbuffer, rlen));
+
                     // we no longer need the buffer
                     SAFE_FREE(buffer_start);
                 } break;
@@ -106,11 +152,12 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
                     int32_t rsize = varint_size(0x01);
                     PCHECK(rsize >= 1);
                     rsize += sizeof(int64_t);
-                    uint8_t* rbuffer = malloc(rsize);
+                    void* rbuffer = malloc(rsize);
+                    uint8_t* rbuffer_ptr = rbuffer;
 
                     // construct the packet
-                    *rbuffer = 0x01;
-                    *(int64_t*)rbuffer = payload;
+                    *rbuffer_ptr++ = 0x01;
+                    *(int64_t*)rbuffer_ptr = payload;
 
                     // send it
                     CHECK_AND_RETHROW(frontend_send(connection, rbuffer, rsize));
@@ -144,6 +191,11 @@ cleanup:
     // if we got an error always free this buffer
     if (!IS_ERROR(err)) {
         SAFE_FREE(buffer_start);
+    }
+
+    // free the root object if we have any
+    if (root != NULL) {
+        json_object_put(root);
     }
 
     return err;
@@ -227,7 +279,7 @@ err_t connection_on_recv(connection_t* conn) {
             // that are small enough already
             case CONN_DECODE_PACKET_SIZE_2: {
                 uint8_t b = recv_buffer_take_byte(conn);
-                conn->packet_size = (b & VARINT_SEGMENT_BITS) << 7;
+                conn->packet_size |= (b & VARINT_SEGMENT_BITS) << 7;
                 PCHECK(conn->packet_size <= conn->buffer_size);
                 conn->recv_state = (b & VARINT_CONTINUE_BIT) ? CONN_DECODE_PACKET_SIZE_3 : after_varint;
             } break;
@@ -235,7 +287,7 @@ err_t connection_on_recv(connection_t* conn) {
             // get the third byte, gotta check the size
             case CONN_DECODE_PACKET_SIZE_3: {
                 uint8_t b = recv_buffer_take_byte(conn);
-                conn->packet_size = (b & VARINT_SEGMENT_BITS) << 14;
+                conn->packet_size |= (b & VARINT_SEGMENT_BITS) << 14;
                 PCHECK(conn->packet_size <= conn->buffer_size);
                 PCHECK((b & VARINT_CONTINUE_BIT) == 0);
                 conn->recv_state = after_varint;
@@ -257,7 +309,7 @@ err_t connection_on_recv(connection_t* conn) {
             // that are small enough already
             case CONN_DECODE_DATA_SIZE_2: {
                 uint8_t b = recv_buffer_take_byte(conn);
-                conn->data_size = (b & VARINT_SEGMENT_BITS) << 7;
+                conn->data_size |= (b & VARINT_SEGMENT_BITS) << 7;
                 PCHECK(conn->data_size <= conn->buffer_size);
                 conn->recv_state = (b & VARINT_CONTINUE_BIT) ? CONN_DECODE_DATA_SIZE_3 : CONN_GOT_FULL_PACKET;
             } break;
@@ -265,7 +317,7 @@ err_t connection_on_recv(connection_t* conn) {
             // get the third byte, gotta check the size
             case CONN_DECODE_DATA_SIZE_3: {
                 uint8_t b = recv_buffer_take_byte(conn);
-                conn->data_size = (b & VARINT_SEGMENT_BITS) << 14;
+                conn->data_size |= (b & VARINT_SEGMENT_BITS) << 14;
                 PCHECK(conn->data_size <= conn->buffer_size);
                 PCHECK((b & VARINT_CONTINUE_BIT) == 0);
                 conn->recv_state = CONN_GOT_FULL_PACKET;
@@ -307,9 +359,15 @@ err_t connection_on_recv(connection_t* conn) {
 
                 // submit the packet
                 CHECK_AND_RETHROW(dispatch_packet(conn, buffer, data_size));
+
+                // return it to the initial state
+                conn->recv_state = CONN_DECODE_PACKET_SIZE_1;
             } break;
         }
     }
+
+    // we are out of data, so reset the offset
+    conn->offset = 0;
 
 cleanup:
     return err;

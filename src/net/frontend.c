@@ -123,8 +123,16 @@ cleanup:
     return err;
 }
 
+static frontend_config_t* m_config;
+
+int frontend_get_max_player_count() {
+    return m_config->max_player_count;
+}
+
 err_t frontend_start(frontend_config_t* config) {
     err_t err = NO_ERROR;
+
+    m_config = config;
 
     // start the server
     CHECK_AND_RETHROW(create_server_socket(config));
@@ -165,7 +173,6 @@ err_t frontend_start(frontend_config_t* config) {
                     if (conn == NULL) {
                         // we are out of memory, just don't allow the client
                         // to join and close its socket
-                        TRACE("closing client_fd=%d", client_fd);
                         close(client_fd);
                     } else {
                         // set it up
@@ -207,6 +214,9 @@ err_t frontend_start(frontend_config_t* config) {
                     connection_t* conn = (connection_t*)REQ_DATA(cqe->user_data);
 
                     if (cqe->res > 0) {
+                        // set the lenght of the current data
+                        conn->length += cqe->res;
+
                         // process it
                         err_t client_err = connection_on_recv(conn);
                         if (client_err == ERROR_PROTOCOL_VIOLATION) {
@@ -265,7 +275,7 @@ err_t frontend_send(connection_t* connection, uint8_t* buffer, int32_t size) {
 
     // get a request structure and write the varint to it
     struct io_uring_sqe* sqe = GET_SQE;
-    io_uring_prep_send(sqe, connection->fd, request->encoded_packet_size, request->encoded_packet_size - ptr, 0);
+    io_uring_prep_send(sqe, connection->fd, request->encoded_packet_size, ptr - request->encoded_packet_size, 0);
     io_uring_sqe_set_flags(sqe, IOSQE_IO_LINK);
     sqe->user_data = (uint64_t)request | REQ_SEND;
 

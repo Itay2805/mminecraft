@@ -26,6 +26,9 @@ typedef enum err {
 
 #define IS_ERROR(err) ((err) != NO_ERROR)
 
+void trace_hex(const void* data, size_t size);
+#define TRACE_HEX(data, size) trace_hex(data, size)
+
 #define TRACE(fmt, ...) printf("[*] " fmt "\n", ## __VA_ARGS__)
 #define WARN(fmt, ...)  printf("[!] " fmt "\n", ## __VA_ARGS__)
 #define ERROR(fmt, ...) printf("[-] " fmt "\n", ## __VA_ARGS__)
@@ -35,6 +38,8 @@ static inline const char* err2str(err_t err) {
     switch (err) {
         case NO_ERROR: return "No error";
         case ERROR_CHECK_FAILED: return "Check failed";
+        case ERROR_PROTOCOL_VIOLATION: return "Protocol violation";
+        case ERROR_OUT_OF_MEMORY: return "Out of memory";
         default: return strerror((int)err - ERROR_ERRNO_BASE);
     }
 }
