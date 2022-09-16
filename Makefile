@@ -35,7 +35,7 @@ CFLAGS 		+= -mtune=skylake -march=skylake
 CFLAGS		+= -static -fshort-wchar
 CFLAGS 		+= -Ilib -Isrc
 
-LDFLAGS		:= $(CFLAGS) -luring -ljson-c
+LDFLAGS		:= $(CFLAGS) -luring -ljson-c -luuid
 
 SRCS 		:= $(shell find src -name '*.c')
 

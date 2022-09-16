@@ -37,6 +37,10 @@ typedef struct connection {
     // the protocol state
     protocol_state_t state;
 
+    // don't queue anything new for the client since
+    // we are working on disconnecting it
+    bool disconnect;
+
     // the buffer itself
     int buffer_size;
     uint8_t* buffer;

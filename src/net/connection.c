@@ -2,6 +2,7 @@
 #include "protocol.h"
 #include "frontend.h"
 
+#include <uuid/uuid.h>
 #include <json-c/json.h>
 
 #include <sys/socket.h>
@@ -38,6 +39,61 @@ int get_total_connections_count() {
 }
 
 /**
+ * Handles everything in the login phase
+ */
+static err_t handle_login_phase(connection_t* connection, const uint8_t* buffer, size_t size) {
+    err_t err = NO_ERROR;
+
+    uint8_t packet_id = *buffer++; size--;
+    switch (packet_id) {
+        // login start
+        case 0x00: {
+            // the max is 16 utf8 chars, which is * 4 + 3 according to the spec
+            PCHECK(size > 1);
+            uint8_t name_len = *buffer++; size--;
+            PCHECK(name_len <= MAX_STRING_SIZE(16));
+            STATIC_ASSERT(MAX_STRING_SIZE(16) <= VARINT_SEGMENT_BITS);
+            char* name = (char*)buffer;
+
+            // TODO: send set compression
+
+            TRACE("New client %.*s", name_len, name);
+
+            // generate the player_uuid for the player
+            // TODO: request it from the server maybe? we want online mode eventually
+            char data[sizeof("OfflinePlayer:") + name_len];
+            strcpy(data, "OfflinePlayer:");
+            memcpy(data + sizeof("OfflinePlayer:") - 1, name, name_len);
+            uuid_t player_uuid = {0 };
+            uuid_t ns_uuid = { 0 };
+            uuid_generate_md5(player_uuid, ns_uuid, data, sizeof(data));
+
+            // allocate enough space for this
+            size_t rbuffer_len = sizeof(uint8_t) + sizeof(uuid_t) + sizeof(uint8_t) + name_len;
+            void* rbuffer = malloc(rbuffer_len);
+            CHECK_ERRNO(rbuffer != NULL);
+
+            // write the packet
+            uint8_t* rbuffer_ptr = rbuffer;
+            *rbuffer_ptr++ = 0x02;
+            memcpy(rbuffer_ptr, player_uuid, sizeof(player_uuid));
+            rbuffer_ptr += sizeof(player_uuid);
+            *rbuffer_ptr++ = name_len;
+            memcpy(rbuffer_ptr, name, name_len);
+
+            // send it
+            CHECK_AND_RETHROW(frontend_send(connection, rbuffer, rbuffer_len));
+        } break;
+
+        default:
+            CHECK_FAIL_ERROR(ERROR_PROTOCOL_VIOLATION);
+    }
+
+cleanup:
+    return err;
+}
+
+/**
  * Packet dispatching logic.
  *
  * Handshake/Status/Login stages    -> frontend handling
@@ -55,7 +111,7 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
     // all packets in game have an id of less than one, so make sure the id
     // is always one and take it (essentially ignoring the fact its a varint)
     uint8_t packet_id = buffer[0];
-    PCHECK((packet_id & 0x80) == 0);
+    PCHECK((packet_id & VARINT_CONTINUE_BIT) == 0);
 
     switch (connection->state) {
         // quick handling, move it right away
@@ -69,8 +125,8 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
             // skip the server address string and port :shrug:
             // the size check also accounts the varint which can only be one byte
             uint8_t server_address_length = DECODE_VARINT(buffer, size);
-            PCHECK(size == server_address_length + sizeof(uint16_t) + 1);
-            buffer += server_address_length + sizeof(uint16_t); size -= server_address_length + sizeof(uint16_t);
+            PCHECK(size == server_address_length + sizeof(uint16_t) + sizeof(uint8_t));
+            buffer += server_address_length + sizeof(uint16_t);
 
             // set the next state
             uint8_t next_state = *buffer;
@@ -80,7 +136,39 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
             // if we are going to login state then check that the version is actually valid, if not
             // then just send the disconnect packet and return
             if (next_state == PROTOCOL_STATE_LOGIN && protocol_version != PROTOCOL_VERSION) {
-                // TODO: queue for disconnect and return
+                //
+                // create the root object
+                //
+                root = json_object_new_object();
+                CHECK_ERRNO(root != NULL);
+                json_object_object_add(root, "text", json_object_new_string("Incompatible client! Please use 1.16.5"));
+
+                //
+                // get the final json
+                //
+                size_t json_len = 0;
+                const char* str = json_object_to_json_string_length(root, 0, &json_len);
+                CHECK_ERRNO(str != NULL);
+
+                // allocate it
+                size_t rlen = json_len + varint_size((int32_t)json_len) + 1;
+                void* rbuffer = malloc(rlen);
+                CHECK_ERRNO(rbuffer != NULL);
+                uint8_t* rbuffer_ptr = rbuffer;
+
+                // set the response id
+                *rbuffer_ptr++ = 0x00;
+
+                // write the length and string itself
+                rbuffer_ptr += varint_write(json_len, rbuffer_ptr);
+                memcpy(rbuffer_ptr, str, json_len);
+
+                // send it
+                CHECK_AND_RETHROW(frontend_send(connection, rbuffer, rlen));
+
+                // this is a protocol violation, so handle it as such
+                WARN("Client tried to connect with invalid version %d", protocol_version);
+                CHECK_FAIL_ERROR(ERROR_PROTOCOL_VIOLATION);
             }
 
             // we no longer need the buffer
@@ -127,6 +215,7 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
                     // allocate it
                     size_t rlen = json_len + varint_size((int32_t)json_len) + 1;
                     void* rbuffer = malloc(rlen);
+                    CHECK_ERRNO(rbuffer != NULL);
                     uint8_t* rbuffer_ptr = rbuffer;
 
                     // set the response id
@@ -146,13 +235,14 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
                 // ping
                 case 0x01: {
                     PCHECK(size == sizeof(int64_t));
-                    int64_t payload = (int64_t)__builtin_bswap64(*(int64_t*)buffer);
+                    int64_t payload = *(int64_t*)buffer;
 
                     // calculate the size we need
                     int32_t rsize = varint_size(0x01);
                     PCHECK(rsize >= 1);
                     rsize += sizeof(int64_t);
                     void* rbuffer = malloc(rsize);
+                    CHECK_ERRNO(rbuffer != NULL);
                     uint8_t* rbuffer_ptr = rbuffer;
 
                     // construct the packet
@@ -174,8 +264,8 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
         // for login we are going to move the code into another place since it does a
         // bit more heavy stuff, but it is handled by the server as well
         case PROTOCOL_STATE_LOGIN: {
-            // TODO: if we got to play state then switch the buffer
-            CHECK_FAIL();
+            // handle this in another function for less bloat in this function
+            CHECK_AND_RETHROW(handle_login_phase(connection, buffer, size));
 
             // we no longer need the buffer
             SAFE_FREE(buffer_start);
@@ -183,13 +273,15 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
 
         case PROTOCOL_STATE_PLAY: {
             // TODO: the buffer is not owned by this
+            TRACE_HEX(buffer_start, size);
+
             CHECK_FAIL();
         } break;
     }
 
 cleanup:
     // if we got an error always free this buffer
-    if (!IS_ERROR(err)) {
+    if (IS_ERROR(err)) {
         SAFE_FREE(buffer_start);
     }
 
@@ -221,19 +313,10 @@ connection_t* put_connection(connection_t* connection) {
     return connection;
 }
 
-static void do_disconnect(connection_t* connection) {
-    if (connection->fd >= 0) {
-        shutdown(connection->fd, SHUT_RDWR);
-        close(connection->fd);
-        connection->fd = -1;
-    }
-
-}
-
 void release_connection(connection_t* connection) {
     if (--connection->ref_count == 0) {
-        // disconnect
-        do_disconnect(connection);
+        // close the fd
+        SAFE_CLOSE(connection->fd);
 
         // free everything
         free(connection->buffer);
@@ -248,8 +331,11 @@ void release_connection(connection_t* connection) {
 }
 
 void disconnect_connection(connection_t* connection) {
-    // close the connection
-    do_disconnect(connection);
+    // mark that we are disconnecting
+    connection->disconnect = true;
+
+    // don't allow recv to work anymore
+    shutdown(connection->fd, SHUT_RD);
 
     // release the reference
     release_connection(connection);

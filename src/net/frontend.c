@@ -80,6 +80,11 @@ static bool m_accepting = false;
 static err_t add_recv(connection_t* conn) {
     err_t err = NO_ERROR;
 
+    // skip this
+    if (conn->disconnect) {
+        goto cleanup;
+    }
+
     struct io_uring_sqe* sqe = GET_SQE;
     io_uring_prep_recv(sqe, conn->fd, conn->buffer + conn->length, conn->buffer_size - conn->length, 0);
     sqe->user_data = (uint64_t)conn | REQ_RECV;

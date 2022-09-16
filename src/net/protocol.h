@@ -22,6 +22,8 @@
         __value; \
     })
 
+#define MAX_STRING_SIZE(x) (((x) * 4) + 3)
+
 /**
  * Write the varint to the storage, this assumes there is
  * enough storage to write it
