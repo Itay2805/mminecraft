@@ -22,12 +22,12 @@ CFLAGS 		+= -Wno-unused-label
 CFLAGS 		+= -Wno-address-of-packed-member
 
 ifeq ($(DEBUG),1)
-	CFLAGS	+= -O0 -g
+	CFLAGS	+= -Og -g
 	CFLAGS	+= -fsanitize=undefined
 	CFLAGS 	+= -fno-sanitize=alignment
 	CFLAGS 	+= -fstack-protector-all
 else
-	CFLAGS	+= -O3 -g0 -flto
+	CFLAGS	+= -O3 -g -flto
 	CFLAGS 	+= -DNDEBUG
 endif
 
@@ -35,13 +35,19 @@ CFLAGS 		+= -mtune=skylake -march=skylake
 CFLAGS		+= -static -fshort-wchar
 CFLAGS 		+= -Ilib -Isrc
 
-LDFLAGS		:= $(CFLAGS) -luring -ljson-c -luuid
-
 SRCS 		:= $(shell find src -name '*.c')
+
+#-----------------------------------------------------------------------------------------------------------------------
+# Flecs config
+#-----------------------------------------------------------------------------------------------------------------------
+
+SRCS		+= lib/flecs/flecs.c
 
 ########################################################################################################################
 # Targets
 ########################################################################################################################
+
+LDFLAGS		:= $(CFLAGS) -luring -ljson-c -luuid
 
 all: $(BIN_DIR)/mminecraft.elf
 

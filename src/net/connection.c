@@ -1,6 +1,7 @@
 #include "connection.h"
 #include "protocol.h"
 #include "frontend.h"
+#include "backend/backend.h"
 
 #include <uuid/uuid.h>
 #include <json-c/json.h>
@@ -68,6 +69,10 @@ static err_t handle_login_phase(connection_t* connection, const uint8_t* buffer,
             uuid_t ns_uuid = { 0 };
             uuid_generate_md5(player_uuid, ns_uuid, data, sizeof(data));
 
+            //
+            // Send to the client that the login was a success
+            //
+
             // allocate enough space for this
             size_t rbuffer_len = sizeof(uint8_t) + sizeof(uuid_t) + sizeof(uint8_t) + name_len;
             void* rbuffer = malloc(rbuffer_len);
@@ -83,10 +88,36 @@ static err_t handle_login_phase(connection_t* connection, const uint8_t* buffer,
 
             // send it
             CHECK_AND_RETHROW(frontend_send(connection, rbuffer, rbuffer_len));
+
+            //
+            // Queue the client as logged in
+            //
+            new_player_event_t* event = malloc(sizeof(new_player_event_t));
+            CHECK_ERRNO(event != NULL);
+            memcpy(event->name, name, name_len);
+            uuid_copy(event->uuid, player_uuid);
+
+            global_queues_lock();
+            list_add_tail(&get_global_queues()->new_players, &event->entry);
+            global_queues_unlock();
         } break;
 
         default:
             CHECK_FAIL_ERROR(ERROR_PROTOCOL_VIOLATION);
+    }
+
+cleanup:
+    return err;
+}
+
+static err_t handle_play_phase(connection_t* connection, const uint8_t* buffer, size_t size) {
+    err_t err = NO_ERROR;
+
+    TRACE_HEX(buffer, size);
+
+    uint8_t packet_id = *buffer++; size--;
+    switch (packet_id) {
+        default: CHECK_FAIL_ERROR(ERROR_PROTOCOL_VIOLATION);
     }
 
 cleanup:
@@ -272,9 +303,7 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
         } break;
 
         case PROTOCOL_STATE_PLAY: {
-            // TODO: the buffer is not owned by this
-            TRACE_HEX(buffer_start, size);
-
+            CHECK_AND_RETHROW(handle_play_phase(connection, buffer, size));
             CHECK_FAIL();
         } break;
     }
