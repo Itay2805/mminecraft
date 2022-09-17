@@ -5,6 +5,9 @@
 #include "util/except.h"
 #include "net/frontend.h"
 #include "backend/backend.h"
+#include "backend/sender.h"
+
+#include <sys/sysinfo.h>
 
 static pthread_t m_frontend_thread;
 static pthread_t m_backend_thread;
@@ -16,6 +19,9 @@ int main() {
 
     // start the backend
     CHECK_ERRNO(pthread_create(&m_backend_thread, NULL, (void*(*)(void*)) backend_start, NULL) == 0);
+
+    // start the backend packet sender
+    CHECK_ERRNO(pthread_create(&m_backend_thread, NULL, (void*(*)(void*)) backend_sender_start, NULL) == 0);
 
     // TODO: there could be a tiny race between the backend start and the frontend start
 

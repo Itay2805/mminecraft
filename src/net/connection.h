@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 #include "util/except.h"
+#include "flecs/flecs.h"
 
 typedef enum connection_recv_state {
     // for deconding the varint, which is a max of 3 bytes
@@ -33,6 +34,9 @@ typedef struct connection {
 
     // the fd of the connection
     int fd;
+
+    // the entity related to this connection
+    ecs_entity_t entity;
 
     // the protocol state
     protocol_state_t state;

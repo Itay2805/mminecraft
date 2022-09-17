@@ -58,8 +58,6 @@ static err_t handle_login_phase(connection_t* connection, const uint8_t* buffer,
 
             // TODO: send set compression
 
-            TRACE("New client %.*s", name_len, name);
-
             // generate the player_uuid for the player
             // TODO: request it from the server maybe? we want online mode eventually
             char data[sizeof("OfflinePlayer:") + name_len];
@@ -68,6 +66,9 @@ static err_t handle_login_phase(connection_t* connection, const uint8_t* buffer,
             uuid_t player_uuid = {0 };
             uuid_t ns_uuid = { 0 };
             uuid_generate_md5(player_uuid, ns_uuid, data, sizeof(data));
+
+            // we are no in play mode
+            connection->state = PROTOCOL_STATE_PLAY;
 
             //
             // Send to the client that the login was a success
@@ -92,13 +93,16 @@ static err_t handle_login_phase(connection_t* connection, const uint8_t* buffer,
             //
             // Queue the client as logged in
             //
-            new_player_event_t* event = malloc(sizeof(new_player_event_t));
+            global_event_t* event = malloc(sizeof(global_event_t));
             CHECK_ERRNO(event != NULL);
-            memcpy(event->name, name, name_len);
-            uuid_copy(event->uuid, player_uuid);
+            event->type = EVENT_NEW_PLAYER;
+            memcpy(event->new_player.name, name, name_len);
+            uuid_copy(event->new_player.uuid, player_uuid);
+            event->new_player.connection = put_connection(connection);
 
+            // queue it
             global_queues_lock();
-            list_add_tail(&get_global_queues()->new_players, &event->entry);
+            list_add_tail(&get_global_queues()->events, &event->entry);
             global_queues_unlock();
         } break;
 
@@ -365,6 +369,18 @@ void disconnect_connection(connection_t* connection) {
 
     // don't allow recv to work anymore
     shutdown(connection->fd, SHUT_RD);
+
+    // tell the server we done
+    if (connection->state == PROTOCOL_STATE_PLAY) {
+        global_event_t* event = malloc(sizeof(global_event_t));
+        event->type = EVENT_CONNECTION_CLOSED;
+        event->connection_closed.entity = connection->entity;
+
+        // queue it
+        global_queues_lock();
+        list_add_tail(&get_global_queues()->events, &event->entry);
+        global_queues_unlock();
+    }
 
     // release the reference
     release_connection(connection);
