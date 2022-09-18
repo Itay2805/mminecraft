@@ -116,15 +116,14 @@ cleanup:
 
 static err_t handle_play_phase(connection_t* connection, const uint8_t* buffer, size_t size) {
     err_t err = NO_ERROR;
+    void* buffer_start = (void*)buffer;
 
+    TRACE("Got packet");
     TRACE_HEX(buffer, size);
 
-    uint8_t packet_id = *buffer++; size--;
-    switch (packet_id) {
-        default: CHECK_FAIL_ERROR(ERROR_PROTOCOL_VIOLATION);
-    }
-
 cleanup:
+    SAFE_FREE(buffer_start);
+
     return err;
 }
 
@@ -308,7 +307,6 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
 
         case PROTOCOL_STATE_PLAY: {
             CHECK_AND_RETHROW(handle_play_phase(connection, buffer, size));
-            CHECK_FAIL();
         } break;
     }
 

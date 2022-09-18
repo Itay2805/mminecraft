@@ -13,6 +13,9 @@ typedef struct send_request_info {
     // the buffer related to this request, so we can return it
     uint8_t* buffer;
 
+    // the callback on how to free the buffer
+    sender_sent_callback_t callback;
+
     // space to use for encoding the packet sizes, both compressed and uncompressed
     uint8_t encoded_packet_size[10];
 } send_request_info_t;
@@ -44,7 +47,7 @@ err_t backend_sender_start() {
             // clean it up properly
             send_request_info_t* info = (send_request_info_t*)cqe->user_data;
             if (info->got_first) {
-                free(info->buffer);
+                info->callback(info->buffer);
                 free(info);
             } else {
                 info->got_first = true;
@@ -84,7 +87,7 @@ void backend_sender_submit() {
         __sqe; \
     })
 
-err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size) {
+err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size, sender_sent_callback_t callback) {
     err_t err = NO_ERROR;
 
     // set a place for this
@@ -95,6 +98,7 @@ err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size) {
     send_request_info_t* request = malloc(sizeof(send_request_info_t));
     CHECK_ERRNO(request != NULL);
     memset(request, 0, sizeof(*request));
+    request->callback = callback;
 
     // prepare the packet sizes and the data if needed
     uint8_t* ptr = request->encoded_packet_size;

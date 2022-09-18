@@ -14,7 +14,9 @@ err_t backend_sender_start();
  */
 void backend_sender_submit();
 
+typedef void (*sender_sent_callback_t)(void* buffer);
+
 /**
  * Sends packets from the backend, this is synchronized properly
  */
-err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size);
+err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size, sender_sent_callback_t callback);
