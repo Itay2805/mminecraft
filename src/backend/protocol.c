@@ -37,7 +37,7 @@ void send_join_game(int fd, ecs_entity_t entity) {
 
     // the first chunk of data
     join_game_1_t* join_game_1 = (join_game_1_t*)arraddnptr(data, sizeof(join_game_1_t));
-    join_game_1->entity_id = (int32_t)entity;
+    join_game_1->entity_id = (int32_t)(entity & ECS_ENTITY_MASK);
     join_game_1->is_hardcore = false;
     join_game_1->gamemode = mode;
     join_game_1->previous_gamemode = -1;

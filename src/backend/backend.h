@@ -1,11 +1,13 @@
 #pragma once
 
+#include <frontend/connection.h>
+#include <frontend/protocol.h>
+#include <util/except.h>
+#include <util/arena.h>
+#include <util/list.h>
+
+#include <flecs/flecs.h>
 #include <uuid/uuid.h>
-#include "util/except.h"
-#include "util/list.h"
-#include "net/protocol.h"
-#include "net/connection.h"
-#include "flecs/flecs.h"
 
 typedef enum global_event_type {
     EVENT_NEW_PLAYER,
@@ -45,9 +47,22 @@ typedef struct global_event {
 // TODO: have this contain a tick arena for all the allocations
 //       we are going to do that we are going to free on a flip
 
+typedef struct packet_event {
+    list_entry_t entry;
+    ecs_entity_t entity;
+    uint32_t size;
+    char data[];
+} packet_event_t;
+
 typedef struct global_queues {
-    // a list of new_player_event
+    // a list of global_event_t
     list_t events;
+
+    // a list of packet_t
+    list_t packes;
+
+    // the allocator for this tick
+    arena_t arena;
 } global_queues_t;
 
 void global_queues_lock();

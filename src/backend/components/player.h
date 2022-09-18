@@ -1,8 +1,9 @@
 #pragma once
 
+#include <frontend/connection.h>
+#include <frontend/protocol.h>
+
 #include <flecs/flecs.h>
-#include "net/protocol.h"
-#include "net/connection.h"
 
 typedef struct player {
     // the name of the player
@@ -10,6 +11,10 @@ typedef struct player {
 
     // the connection of this player
     connection_t* connection;
+
+    // the player's configured view
+    // distance
+    int view_distance;
 } player_t;
 extern ECS_COMPONENT_DECLARE(player_t);
 

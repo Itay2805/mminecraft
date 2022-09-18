@@ -46,12 +46,12 @@ static global_queues_t* get_current_queues() {
 static void global_queues_switch() {
     global_queues_lock();
     m_current_queue = 1 - m_current_queue;
-
-    // reset it
-    m_global_queues[m_current_queue].events = INIT_LIST(m_global_queues[m_current_queue].events);
-
     global_queues_unlock();
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Handle global events
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static err_t handle_global_events() {
     err_t err = NO_ERROR;
@@ -113,9 +113,25 @@ static err_t handle_global_events() {
             default:
                 CHECK_FAIL();
         }
+    }
 
-        // TODO: move to an arena
-        free(global_event);
+cleanup:
+    return err;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Handle player specific events
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static err_t handle_packets() {
+    err_t err = NO_ERROR;
+
+    global_queues_t* q = get_current_queues();
+
+    packet_event_t* packet;
+    while ((packet = LIST_ENTRY(list_pop(&q->packes), packet_event_t, entry)) != NULL) {
+        TRACE("Entity %llu sent %d bytes", packet->entity & ECS_ENTITY_MASK, packet->size);
+        TRACE_HEX(packet->data, packet->size);
     }
 
 cleanup:
@@ -126,12 +142,29 @@ cleanup:
 // Main tick event loop
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/**
+ * This runs at the end of the tick and makes sure that everything is fully finalized
+ */
+static void finalize_tick(ecs_iter_t* it) {
+    // reset the arena, since we no longer need it
+    arena_reset(&get_current_queues()->arena);
+
+    // now submit everything
+    backend_sender_submit();
+}
+
 err_t backend_start() {
     err_t err = NO_ERROR;
 
-    // reset both by doing two switches
-    global_queues_switch();
-    global_queues_switch();
+    // reset the queues
+
+    arena_init(&m_global_queues[0].arena);
+    m_global_queues[0].events = INIT_LIST(m_global_queues[0].events);
+    m_global_queues[0].packes = INIT_LIST(m_global_queues[0].packes);
+
+    arena_init(&m_global_queues[1].arena);
+    m_global_queues[1].events = INIT_LIST(m_global_queues[1].events);
+    m_global_queues[1].packes = INIT_LIST(m_global_queues[1].packes);
 
     // initialize the ecs
     init_world_ecs();
@@ -156,24 +189,25 @@ err_t backend_start() {
     ecs_singleton_set(g_ecs, EcsRest, {0});
     ECS_IMPORT(g_ecs, FlecsMonitor);
 
+    // finalize the tick at this moment
+    // TODO: way to force it is actually running at the very very very end
+    ECS_SYSTEM(g_ecs, finalize_tick, EcsOnStore, 0);
+
     // setup the world
     CHECK_AND_RETHROW(init_world());
 
     while (1) {
-        struct timespec tick_start;
-        CHECK_ERRNO(clock_gettime(CLOCK_MONOTONIC, &tick_start) == 0);
-
         // switch the queues
         global_queues_switch();
 
         // handle global events that come from the frontend
         CHECK_AND_RETHROW(handle_global_events());
 
+        // handle the packets we got from the player
+        CHECK_AND_RETHROW(handle_packets());
+
         // Process the world itself
         ecs_progress(g_ecs, 0.0f);
-
-        // now submit everything
-        backend_sender_submit();
     }
 
 cleanup:

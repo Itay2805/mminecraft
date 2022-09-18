@@ -93,16 +93,16 @@ static err_t handle_login_phase(connection_t* connection, const uint8_t* buffer,
             //
             // Queue the client as logged in
             //
-            global_event_t* event = malloc(sizeof(global_event_t));
-            CHECK_ERRNO(event != NULL);
-            event->type = EVENT_NEW_PLAYER;
-            memcpy(event->new_player.name, name, name_len);
-            uuid_copy(event->new_player.uuid, player_uuid);
-            event->new_player.connection = put_connection(connection);
-
-            // queue it
             global_queues_lock();
-            list_add_tail(&get_global_queues()->events, &event->entry);
+            {
+                global_event_t* event = arena_alloc(&get_global_queues()->arena, sizeof(global_event_t));
+                event->type = EVENT_NEW_PLAYER;
+                memcpy(event->new_player.name, name, name_len);
+                uuid_copy(event->new_player.uuid, player_uuid);
+                event->new_player.connection = put_connection(connection);
+
+                list_add_tail(&get_global_queues()->events, &event->entry);
+            }
             global_queues_unlock();
         } break;
 
@@ -111,19 +111,6 @@ static err_t handle_login_phase(connection_t* connection, const uint8_t* buffer,
     }
 
 cleanup:
-    return err;
-}
-
-static err_t handle_play_phase(connection_t* connection, const uint8_t* buffer, size_t size) {
-    err_t err = NO_ERROR;
-    void* buffer_start = (void*)buffer;
-
-    TRACE("Got packet");
-    TRACE_HEX(buffer, size);
-
-cleanup:
-    SAFE_FREE(buffer_start);
-
     return err;
 }
 
@@ -139,7 +126,6 @@ cleanup:
  */
 static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, size_t size) {
     err_t err = NO_ERROR;
-    void* buffer_start = (void*)buffer;
     json_object* root = NULL;
 
     // all packets in game have an id of less than one, so make sure the id
@@ -204,9 +190,6 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
                 WARN("Client tried to connect with invalid version %d", protocol_version);
                 CHECK_FAIL_ERROR(ERROR_PROTOCOL_VIOLATION);
             }
-
-            // we no longer need the buffer
-            SAFE_FREE(buffer_start);
         } break;
 
         // for status we are going to handle this right in here as well, because of
@@ -261,9 +244,6 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
 
                     // send it
                     CHECK_AND_RETHROW(frontend_send(connection, rbuffer, rlen));
-
-                    // we no longer need the buffer
-                    SAFE_FREE(buffer_start);
                 } break;
 
                 // ping
@@ -286,8 +266,6 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
                     // send it
                     CHECK_AND_RETHROW(frontend_send(connection, rbuffer, rsize));
 
-                    // we no longer need the buffer
-                    SAFE_FREE(buffer_start);
                 } break;
 
                 // assume invalid packet
@@ -300,22 +278,15 @@ static err_t dispatch_packet(connection_t* connection, const uint8_t* buffer, si
         case PROTOCOL_STATE_LOGIN: {
             // handle this in another function for less bloat in this function
             CHECK_AND_RETHROW(handle_login_phase(connection, buffer, size));
-
-            // we no longer need the buffer
-            SAFE_FREE(buffer_start);
         } break;
 
         case PROTOCOL_STATE_PLAY: {
-            CHECK_AND_RETHROW(handle_play_phase(connection, buffer, size));
+            // we should never get here
+            CHECK_FAIL();
         } break;
     }
 
 cleanup:
-    // if we got an error always free this buffer
-    if (IS_ERROR(err)) {
-        SAFE_FREE(buffer_start);
-    }
-
     // free the root object if we have any
     if (root != NULL) {
         json_object_put(root);
@@ -370,13 +341,14 @@ void disconnect_connection(connection_t* connection) {
 
     // tell the server we done
     if (connection->state == PROTOCOL_STATE_PLAY) {
-        global_event_t* event = malloc(sizeof(global_event_t));
-        event->type = EVENT_CONNECTION_CLOSED;
-        event->connection_closed.entity = connection->entity;
-
         // queue it
         global_queues_lock();
-        list_add_tail(&get_global_queues()->events, &event->entry);
+        {
+            global_event_t* event = arena_alloc(&get_global_queues()->arena, sizeof(global_event_t));
+            event->type = EVENT_CONNECTION_CLOSED;
+            event->connection_closed.entity = connection->entity;
+            list_add_tail(&get_global_queues()->events, &event->entry);
+        }
         global_queues_unlock();
     }
 
@@ -472,22 +444,35 @@ err_t connection_on_recv(connection_t* conn) {
                 }
 
                 // we got the data, allocate and decompress if needed
-                void* buffer;
-                int32_t data_size;
                 if (conn->compressed && conn->data_size != 0) {
-                    data_size = conn->data_size;
-                    // TODO: decompress
+                    // TODO: decompress, in this case we are going to allocate in intermediate buffer,
+                    //       decompress the data to there, and only then allocate and copy the real data
                     CHECK_FAIL();
                 } else {
-                    data_size = conn->packet_size;
-                    buffer = malloc(data_size);
-                    memcpy(buffer, conn->buffer + conn->offset, data_size);
+                    int32_t data_size = conn->packet_size;
+
+                    // during play we are going to use the tick allocator,
+                    // otherwise use a normal malloc
+                    if (conn->state == PROTOCOL_STATE_PLAY) {
+                        global_queues_lock();
+                        {
+                            // move the packet to the backend
+                            packet_event_t* packet = arena_alloc(&get_global_queues()->arena, sizeof(packet_event_t) + data_size);
+                            packet->size = data_size;
+                            packet->entity = conn->entity;
+                            memcpy(packet->data, conn->buffer + conn->offset, data_size);
+                            list_add_tail(&get_global_queues()->packes, &packet->entry);
+                        }
+                        global_queues_unlock();
+                    } else {
+                        // handle the data on our own, no need to allocate it
+                       CHECK_AND_RETHROW(dispatch_packet(conn, conn->buffer + conn->offset, data_size));
+                    }
+
+                    // move the data
                     conn->offset += data_size;
                     conn->length -= data_size;
                 }
-
-                // submit the packet
-                CHECK_AND_RETHROW(dispatch_packet(conn, buffer, data_size));
 
                 // return it to the initial state
                 conn->recv_state = CONN_DECODE_PACKET_SIZE_1;

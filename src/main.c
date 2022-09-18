@@ -3,9 +3,9 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include "util/except.h"
-#include "net/frontend.h"
 #include "backend/backend.h"
 #include "backend/sender.h"
+#include "frontend/frontend.h"
 
 #include <sys/sysinfo.h>
 
