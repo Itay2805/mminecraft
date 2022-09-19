@@ -46,7 +46,10 @@ err_t backend_sender_start() {
             count++;
 
             // TODO: do we want any kind of handling for errors?
-
+            if (cqe->res < 0) {
+                WARN("sender: got error %s sending data", strerror(-cqe->res));
+            }
+            
             // clean it up properly
             send_request_info_t* info = (send_request_info_t*)cqe->user_data;
             if (info->got_first) {

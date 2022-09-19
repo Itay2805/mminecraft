@@ -1,15 +1,19 @@
-#include <time.h>
-#include <pthread.h>
-#include <stdlib.h>
-#include <sys/sysinfo.h>
 #include "backend.h"
+
+#include "protocol.h"
+#include "sender.h"
 #include "world.h"
 
-#include "backend/components/player.h"
-#include "backend/components/entity.h"
-#include "world/world.h"
-#include "sender.h"
-#include "protocol.h"
+#include <backend/components/player.h>
+#include <backend/components/entity.h>
+#include <backend/components/chunk.h>
+#include <world/world.h>
+#include <util/defs.h>
+
+#include <sys/sysinfo.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <time.h>
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Global events
@@ -81,6 +85,7 @@ static err_t handle_global_events() {
 
                 // create the entity
                 ecs_entity_t entity = ecs_new_id(g_ecs);
+                ecs_add_pair(g_ecs, entity, EcsChildOf, players);
                 ecs_add(g_ecs, entity, entity_position_t);
                 ecs_add(g_ecs, entity, entity_rotation_t);
                 ecs_add(g_ecs, entity, entity_velocity_t);
@@ -123,6 +128,8 @@ cleanup:
 // Handle player specific events
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#define PCHECK(expr, ...) CHECK_ERROR_LABEL(expr, ERROR_PROTOCOL_VIOLATION, next_packet, ## __VA_ARGS__)
+
 static err_t handle_packets() {
     err_t err = NO_ERROR;
 
@@ -130,8 +137,50 @@ static err_t handle_packets() {
 
     packet_event_t* packet;
     while ((packet = LIST_ENTRY(list_pop(&q->packes), packet_event_t, entry)) != NULL) {
-        TRACE("Entity %llu sent %d bytes", packet->entity & ECS_ENTITY_MASK, packet->size);
-        TRACE_HEX(packet->data, packet->size);
+        size_t size = packet->size;
+        uint8_t* data = packet->data;
+
+        uint8_t packet_id = *data++; size--;
+        switch (packet_id) {
+            // client settings
+            case 0x05: {
+                // skip the locale
+                PCHECK(size > 1);
+                uint8_t locale_len = *data++; size--;
+                PCHECK((locale_len & VARINT_CONTINUE_BIT) == 0);
+                PCHECK(size > locale_len);
+                data += locale_len;
+                size -= locale_len;
+
+                // parse the rest, making sure varints are the size we expect them
+                PCHECK(size == 5);
+                uint8_t view_distance = *data++; size--;
+                uint8_t chat_mode = *data++; size--; PCHECK((chat_mode & VARINT_CONTINUE_BIT) == 0);
+                data++; size--; // chat colors
+                data++; size--; // displayed skin parts
+                uint8_t main_hand = *data++; size--; PCHECK((main_hand & VARINT_CONTINUE_BIT) == 0);
+
+                // put in a safe range
+                view_distance = MIN(view_distance, MAX_VIEW_DISTANCE);
+
+                // TODO: save more settings
+                ecs_set(g_ecs, packet->entity, player_view_distance_t, { .view_distance = view_distance });
+            } break;
+
+            default:
+                TRACE("Entity %llu sent %d bytes of packet %d", packet->entity & ECS_ENTITY_MASK, packet->size, packet_id);
+                TRACE_HEX(packet->data, packet->size);
+                break;
+        }
+
+    next_packet:
+        if (err == ERROR_PROTOCOL_VIOLATION) {
+            // if we got a protocol violation queue player for disconnect
+            // and continue onwards
+            const player_t* player = ecs_get(g_ecs, packet->entity, player_t);
+            disconnect_connection(player->connection);
+        }
+        CHECK_AND_RETHROW(err);
     }
 
 cleanup:
@@ -151,6 +200,35 @@ static void finalize_tick(ecs_iter_t* it) {
 
     // now submit everything
     backend_sender_submit();
+}
+
+/**
+ * Whenever the view distance is set we are going to re-calculate which chunks the player needs
+ * and register on them
+ */
+static void player_view_distance_set(ecs_iter_t* it) {
+    player_view_distance_t* distance = ecs_field(it, player_view_distance_t, 1);
+    entity_position_t* position = ecs_field(it, entity_position_t, 2);
+
+    for (int i = 0; i < it->count; i++) {
+        chunk_position_t pos = (chunk_position_t){
+            .x = (int)position[i].x >> 4,
+                .z = (int)position[i].z >> 4
+        };
+        int64_t radius = distance[i].view_distance / 2;
+
+        for (int64_t z = -radius; z <= radius; z++) {
+            for (int64_t x = -radius; x <= radius; x++) {
+                chunk_position_t p = (chunk_position_t){ .x = pos.x + x, .z = pos.z + z };
+                ecs_entity_t chunk = get_ecs_chunk(p);
+                ecs_add_pair(g_ecs, it->entities[i], entity_chunk, chunk);
+            }
+        }
+    }
+}
+
+static void set_systems() {
+    ECS_OBSERVER(g_ecs, player_view_distance_set, EcsOnAdd, player_view_distance_t, [in] entity_position_t);
 }
 
 err_t backend_start() {
@@ -192,6 +270,9 @@ err_t backend_start() {
     // finalize the tick at this moment
     // TODO: way to force it is actually running at the very very very end
     ECS_SYSTEM(g_ecs, finalize_tick, EcsOnStore, 0);
+
+    // setup all the systems
+    set_systems();
 
     // setup the world
     CHECK_AND_RETHROW(init_world());

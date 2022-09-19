@@ -5,6 +5,7 @@
 #include "sender.h"
 #include "world/world.h"
 #include "nbt/nbt_writer.h"
+#include "backend.h"
 
 #include <nbt/dimension_codec.nbt.h>
 #include <nbt/overworld.nbt.h>
@@ -91,7 +92,7 @@ void send_join_game(int fd, ecs_entity_t entity) {
     // the second chunk of data
     join_game_2_t* join_game_2 = (join_game_2_t*)arraddnptr(data, sizeof(join_game_2_t));
     join_game_2->hashed_seed = 0;
-    join_game_2->view_distance = 32;
+    join_game_2->view_distance = MAX_VIEW_DISTANCE;
     join_game_2->reduced_debug_info = false;
     join_game_2->enable_respawn_screen = true;
     join_game_2->is_debug = false;

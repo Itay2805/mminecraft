@@ -9,6 +9,11 @@
 #include <flecs/flecs.h>
 #include <uuid/uuid.h>
 
+/**
+ * The max view distance we support
+ */
+#define MAX_VIEW_DISTANCE 32
+
 typedef enum global_event_type {
     EVENT_NEW_PLAYER,
     EVENT_CONNECTION_CLOSED,
@@ -51,7 +56,7 @@ typedef struct packet_event {
     list_entry_t entry;
     ecs_entity_t entity;
     uint32_t size;
-    char data[];
+    uint8_t data[];
 } packet_event_t;
 
 typedef struct global_queues {

@@ -85,15 +85,10 @@ chunk_t* put_chunk(chunk_t* chunk);
 
 void release_chunk(chunk_t* chunk);
 
-typedef union chunk_position {
-    struct {
-        uint64_t x : 28;
-        uint64_t y : 28;
-        uint64_t z : 8;
-    };
-    uint64_t packed;
+typedef struct chunk_position {
+    int32_t x;
+    int32_t z;
 } chunk_position_t;
-STATIC_ASSERT(sizeof(chunk_position_t) == sizeof(uint64_t));
 
 typedef chunk_t*(*generate_chunk_t)(void* ctx, chunk_position_t position);
 

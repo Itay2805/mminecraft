@@ -29,4 +29,6 @@ typedef struct entity_id {
 } entity_id_t;
 extern ECS_COMPONENT_DECLARE(entity_id_t);
 
+extern ECS_DECLARE(entity_chunk);
+
 void init_entity_ecs();
