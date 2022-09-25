@@ -7,6 +7,8 @@
 
 /**
  * Represents a base entity component
+ *
+ * TODO: use EcsPosition3 instead?
  */
 typedef struct entity_position {
     double x, y, z;
@@ -14,8 +16,8 @@ typedef struct entity_position {
 extern ECS_COMPONENT_DECLARE(entity_position_t);
 
 typedef struct entity_rotation {
-    uint8_t pitch;
-    uint8_t yaw;
+    float yaw;
+    float pitch;
 } entity_rotation_t;
 extern ECS_COMPONENT_DECLARE(entity_rotation_t);
 

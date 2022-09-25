@@ -10,17 +10,14 @@
 static struct io_uring m_ring = { 0 };
 
 typedef struct send_request_info {
-    // the first was finished, waiting for the next one now
-    bool got_first;
+    // space to use for encoding the packet sizes, both compressed and uncompressed
+    uint8_t encoded_packet_size[10];
 
-    // the buffer related to this request, so we can return it
-    uint8_t* buffer;
+    // the iovec used for this request
+    struct iovec iovec[2];
 
     // the callback on how to free the buffer
     sender_sent_callback_t callback;
-
-    // space to use for encoding the packet sizes, both compressed and uncompressed
-    uint8_t encoded_packet_size[10];
 } send_request_info_t;
 
 
@@ -52,12 +49,8 @@ err_t backend_sender_start() {
             
             // clean it up properly
             send_request_info_t* info = (send_request_info_t*)cqe->user_data;
-            if (info->got_first) {
-                info->callback(info->buffer);
-                free(info);
-            } else {
-                info->got_first = true;
-            }
+            info->callback(info->iovec[1].iov_base);
+            free(info);
         }
 
         io_uring_cq_advance(&m_ring, count);
@@ -101,9 +94,8 @@ err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size, sender_sent_cal
     CHECK(needed_size >= 1);
 
     // get a new request
-    send_request_info_t* request = malloc(sizeof(send_request_info_t));
+    send_request_info_t* request = calloc(1, sizeof(send_request_info_t));
     CHECK_ERRNO(request != NULL);
-    memset(request, 0, sizeof(*request));
     request->callback = callback;
 
     // prepare the packet sizes and the data if needed
@@ -114,19 +106,18 @@ err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size, sender_sent_cal
     // write the size in here
     ptr += varint_write(size, ptr);
 
+    // set the size vec
+    request->iovec[0].iov_base = request->encoded_packet_size;
+    request->iovec[0].iov_len = ptr - request->encoded_packet_size;
+
+    // set the data vec
+    request->iovec[1].iov_base = buffer;
+    request->iovec[1].iov_len = size;
+
     pthread_mutex_lock(&m_sqe_ring_mutex);
-
-    // get a request structure and write the varint to it
     struct io_uring_sqe* sqe = GET_SQE;
-    io_uring_prep_send(sqe, fd, request->encoded_packet_size, ptr - request->encoded_packet_size, 0);
-    io_uring_sqe_set_flags(sqe, IOSQE_IO_LINK);
-    sqe->user_data = (uint64_t)request;
-
-    // now that we sent the size, send the other thing
-    sqe = GET_SQE;
-    io_uring_prep_send(sqe, fd, buffer, size, 0);
-    sqe->user_data = (uint64_t)request;
-
+    io_uring_prep_writev(sqe, fd, request->iovec, 2, 0);
+    io_uring_sqe_set_data(sqe, request);
     pthread_mutex_unlock(&m_sqe_ring_mutex);
 
 cleanup:

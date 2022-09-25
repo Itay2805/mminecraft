@@ -15,14 +15,11 @@ typedef struct send_request_info {
     // the connection related to this request
     connection_t* connection;
 
-    // the first was finished, waiting for the next one now
-    bool got_first;
-
-    // the buffer related to this request, so we can return it
-    uint8_t* buffer;
-
     // space to use for encoding the packet sizes, both compressed and uncompressed
     uint8_t encoded_packet_size[10];
+
+    // the iovecs
+    struct iovec iovec[2];
 } send_request_info_t;
 
 typedef enum operation_type {
@@ -198,19 +195,16 @@ err_t frontend_start(frontend_config_t* config) {
                 // on send completion just free the buffer we used for sending
                 case REQ_SEND: {
                     send_request_info_t* req = (send_request_info_t*)REQ_DATA(cqe->user_data);
+
+                    // free the buffer
+                    free(req->iovec[1].iov_base);
+
                     if (cqe->res <= 0) {
                         // the send has failed, disconnect the client
                         disconnect_connection(req->connection);
-                    }
-
-                    if (req->got_first) {
-                        // free the buffer
-                        free(req->buffer);
-
-                        // release the connection since we no longer reference it
-                        release_connection(req->connection);
                     } else {
-                        req->got_first = true;
+                        // release the connection
+                        release_connection(req->connection);
                     }
                 } break;
 
@@ -261,9 +255,8 @@ err_t frontend_send(connection_t* connection, uint8_t* buffer, int32_t size) {
     CHECK(needed_size >= 1);
 
     // get a new request
-    send_request_info_t* request = malloc(sizeof(send_request_info_t));
+    send_request_info_t* request = calloc(1, sizeof(send_request_info_t));
     CHECK_ERRNO(request != NULL);
-    memset(request, 0, sizeof(*request));
 
     // we are going to store this
     request->connection = put_connection(connection);
@@ -278,16 +271,17 @@ err_t frontend_send(connection_t* connection, uint8_t* buffer, int32_t size) {
         ptr += varint_write(size, ptr);
     }
 
+    // the size
+    request->iovec[0].iov_base = request->encoded_packet_size;
+    request->iovec[0].iov_len = ptr - request->encoded_packet_size;
+
+    // the buffer
+    request->iovec[1].iov_base = buffer;
+    request->iovec[1].iov_len = size;
+
     // get a request structure and write the varint to it
     struct io_uring_sqe* sqe = GET_SQE;
-    io_uring_prep_send(sqe, connection->fd, request->encoded_packet_size, ptr - request->encoded_packet_size, 0);
-    io_uring_sqe_set_flags(sqe, IOSQE_IO_LINK);
-    sqe->user_data = (uint64_t)request | REQ_SEND;
-
-    // now that we sent the size, send the other thing
-    sqe = GET_SQE;
-    CHECK_ERRNO(sqe != NULL);
-    io_uring_prep_send(sqe, connection->fd, buffer, size, 0);
+    io_uring_prep_writev(sqe, connection->fd, request->iovec, 2, 0);
     sqe->user_data = (uint64_t)request | REQ_SEND;
 
 cleanup:

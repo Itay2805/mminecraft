@@ -11,9 +11,14 @@ typedef uint16_t block_state_id_t;
 
 #define INVALID_BLOCK_STATE_ID ((block_state_id_t)-1)
 
+typedef struct chunk_position {
+    int32_t x;
+    int32_t z;
+} chunk_position_t;
+
 typedef struct section_palette {
     // the entries
-    uint64_t entries[4];
+    uint64_t entries[256];
 
     // reverse lookup
     struct {
@@ -33,12 +38,20 @@ typedef struct section {
     // is not needed
     section_palette_t* palette;
 
+    // the amount of non-air blocks in this chunk
+    uint16_t block_count;
+
     // the blocks in this chunk
     block_state_id_t blocks[16 * 16 * 16];
 
     // used to sync accesses to the palette and blocks
     pthread_rwlock_t lock;
 } section_t;
+
+/**
+ * Used to index the blocks array
+ */
+#define BLOCK_IDX(x, y, z) ((x) + ((z) * 16) + ((y) * 16 * 16))
 
 /**
  * Makes sure the block exists in the palette
@@ -57,6 +70,13 @@ void section_compact_palette(section_t* section);
 void section_create_palette(section_t* section);
 
 /**
+ * Unlike the palette this has to always be kept and
+ * updated properly, if you don't create a palette at
+ * least try and use this to calculate the block count
+ */
+void section_calc_block_count(section_t* section);
+
+/**
  * write the compacted data
  */
 uint8_t* section_write_compact(section_t* section, uint8_t* data);
@@ -70,8 +90,8 @@ typedef struct section_light {
 } section_light_t;
 
 typedef struct chunk {
-    // how many references exist to the chunk, at zero it gets deleted
-    atomic_int ref_count;
+    // position of this chunk
+    chunk_position_t position;
 
     // the block data of sections
     section_t* sections[16];
@@ -85,12 +105,7 @@ chunk_t* put_chunk(chunk_t* chunk);
 
 void release_chunk(chunk_t* chunk);
 
-typedef struct chunk_position {
-    int32_t x;
-    int32_t z;
-} chunk_position_t;
-
-typedef chunk_t*(*generate_chunk_t)(void* ctx, chunk_position_t position);
+typedef chunk_t*(*generate_chunk_t)(uint64_t seed, chunk_position_t position);
 
 typedef struct world {
     // the chunks, an stb_ds map
@@ -103,7 +118,7 @@ typedef struct world {
     bool flat;
 
     // for generating new chunks
-    void* gen_ctx;
+    uint64_t seed;
     generate_chunk_t generate;
 
     // used to prevent accesses to the chunk map
@@ -114,6 +129,11 @@ typedef struct world {
  * Get the chunk at the given position, increasing its ref count
  */
 chunk_t* world_get_chunk(world_t* world, chunk_position_t position);
+
+/**
+ * Set a new chunk in the world, hope that it is not generated already
+ */
+void world_set_chunk(world_t* world, chunk_t* chunk);
 
 /**
  * The overworld instance of this server

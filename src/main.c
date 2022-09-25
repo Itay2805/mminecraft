@@ -6,6 +6,7 @@
 #include "backend/backend.h"
 #include "backend/sender.h"
 #include "frontend/frontend.h"
+#include "util/xoshiro256starstar.h"
 
 #include <sys/sysinfo.h>
 
@@ -16,6 +17,9 @@ static pthread_t m_backend_thread;
 
 int main() {
     err_t err = NO_ERROR;
+
+    // seed our random number generator
+    xoshiro256starstar_seed();
 
     // start the backend
     CHECK_ERRNO(pthread_create(&m_backend_thread, NULL, (void*(*)(void*)) backend_start, NULL) == 0);

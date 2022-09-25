@@ -16,9 +16,9 @@ void init_entity_ecs() {
     ECS_COMPONENT_DEFINE(g_ecs, entity_id_t);
 
     ECS_TAG_DEFINE(g_ecs, entity_chunk);
+    ecs_add_id(g_ecs, entity_chunk, EcsAcyclic);
 
     // TODO: debug only
-    ecs_add_pair(g_ecs, ecs_id(entity_position_t), EcsChildOf, components);
     ecs_struct(g_ecs, {
         .entity = ecs_id(entity_position_t),
         .members = {
@@ -27,15 +27,13 @@ void init_entity_ecs() {
                 { .name = "z", .type = ecs_id(ecs_f32_t) },
         }
     });
-    ecs_add_pair(g_ecs, ecs_id(entity_rotation_t), EcsChildOf, components);
     ecs_struct(g_ecs, {
         .entity = ecs_id(entity_rotation_t),
         .members = {
-                { .name = "pitch", .type = ecs_id(ecs_i8_t) },
-                { .name = "yaw", .type = ecs_id(ecs_i8_t) },
+                { .name = "pitch", .type = ecs_id(ecs_f32_t) },
+                { .name = "yaw", .type = ecs_id(ecs_f32_t) },
         }
     });
-    ecs_add_pair(g_ecs, ecs_id(entity_velocity_t), EcsChildOf, components);
     ecs_struct(g_ecs, {
         .entity = ecs_id(entity_velocity_t),
         .members = {
@@ -44,7 +42,4 @@ void init_entity_ecs() {
                 { .name = "z", .type = ecs_id(ecs_i16_t) },
         }
     });
-    ecs_add_pair(g_ecs, ecs_id(entity_id_t), EcsChildOf, components);
-
-    ecs_add_pair(g_ecs, ecs_id(entity_chunk), EcsChildOf, components);
 }
