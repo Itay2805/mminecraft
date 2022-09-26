@@ -49,9 +49,12 @@ static void do_chunk_gen(void* arg, struct scheduler* s, struct sched_task_parti
     clock_t start = clock();
     chunk_t* chunk = gen->world->generate(gen->world->seed, gen->position);
     clock_t end = clock();
-    TRACE("took %f seconds to generate chunk at %d.%d",
-          (end - start) / (float)CLOCKS_PER_SEC,
-          gen->position.x, gen->position.z);
+    float time = (float)(end - start) / (float)CLOCKS_PER_SEC;
+    if (time >= 0.50) {
+        TRACE("took %f seconds to generate chunk at %d.%d",
+              (end - start) / (float)CLOCKS_PER_SEC,
+              gen->position.x, gen->position.z);
+    }
 
     // add it to the world
     chunk->position = gen->position;

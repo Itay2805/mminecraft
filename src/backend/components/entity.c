@@ -2,25 +2,18 @@
 
 #include <backend/world.h>
 
-ECS_COMPONENT_DECLARE(entity_position_t);
-ECS_COMPONENT_DECLARE(entity_rotation_t);
-ECS_COMPONENT_DECLARE(entity_velocity_t);
-ECS_COMPONENT_DECLARE(entity_id_t);
-
-ECS_DECLARE(entity_chunk);
+ECS_COMPONENT_DECLARE(EntityPosition);
+ECS_COMPONENT_DECLARE(EntityRotation);
+ECS_COMPONENT_DECLARE(EntityUuid);
 
 void init_entity_ecs() {
-    ECS_COMPONENT_DEFINE(g_ecs, entity_position_t);
-    ECS_COMPONENT_DEFINE(g_ecs, entity_rotation_t);
-    ECS_COMPONENT_DEFINE(g_ecs, entity_velocity_t);
-    ECS_COMPONENT_DEFINE(g_ecs, entity_id_t);
-
-    ECS_TAG_DEFINE(g_ecs, entity_chunk);
-    ecs_add_id(g_ecs, entity_chunk, EcsAcyclic);
+    ECS_COMPONENT_DEFINE(g_ecs, EntityPosition);
+    ECS_COMPONENT_DEFINE(g_ecs, EntityRotation);
+    ECS_COMPONENT_DEFINE(g_ecs, EntityUuid);
 
     // TODO: debug only
     ecs_struct(g_ecs, {
-        .entity = ecs_id(entity_position_t),
+        .entity = ecs_id(EntityPosition),
         .members = {
                 { .name = "x", .type = ecs_id(ecs_f32_t) },
                 { .name = "y", .type = ecs_id(ecs_f32_t) },
@@ -28,18 +21,10 @@ void init_entity_ecs() {
         }
     });
     ecs_struct(g_ecs, {
-        .entity = ecs_id(entity_rotation_t),
+        .entity = ecs_id(EntityRotation),
         .members = {
                 { .name = "pitch", .type = ecs_id(ecs_f32_t) },
                 { .name = "yaw", .type = ecs_id(ecs_f32_t) },
-        }
-    });
-    ecs_struct(g_ecs, {
-        .entity = ecs_id(entity_velocity_t),
-        .members = {
-                { .name = "x", .type = ecs_id(ecs_i16_t) },
-                { .name = "y", .type = ecs_id(ecs_i16_t) },
-                { .name = "z", .type = ecs_id(ecs_i16_t) },
         }
     });
 }

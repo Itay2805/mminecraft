@@ -6,7 +6,7 @@ CC 			:= ccache clang
 LD			:= clang
 
 # Build in debug or release mode
-DEBUG		:= 0
+DEBUG		:= 1
 
 OUT_DIR		:= out
 BIN_DIR		:= $(OUT_DIR)/bin
@@ -23,8 +23,8 @@ CFLAGS 		+= -Wno-address-of-packed-member
 
 ifeq ($(DEBUG),1)
 	CFLAGS	+= -Og -g
-	CFLAGS	+= -fsanitize=undefined
-	CFLAGS 	+= -fno-sanitize=alignment
+#	CFLAGS	+= -fsanitize=undefined
+#	CFLAGS 	+= -fno-sanitize=alignment
 	CFLAGS 	+= -fstack-protector-all
 else
 	CFLAGS	+= -O3 -g -flto

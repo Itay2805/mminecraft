@@ -79,36 +79,37 @@ static err_t handle_global_events() {
             case EVENT_NEW_PLAYER: {
                 new_player_event_t* event = &global_event->new_player;
 
+                // TODO: make sure player does not exists already
+
                 // create the entity
                 ecs_entity_t entity = ecs_new_id(g_ecs);
-                ecs_add_pair(g_ecs, entity, EcsChildOf, players);
-                ecs_set(g_ecs, entity, entity_position_t, { .x = 8.5, .y = 65, .z = 8.5 });
-                ecs_set(g_ecs, entity, entity_rotation_t, { .yaw = -180.0f, .pitch = 0.0f });
-                ecs_set(g_ecs, entity, entity_velocity_t, { .x = 0, .y = 0, .z = 0 });
-                ecs_set(g_ecs, entity, game_mode_t, { GAME_MODE_CREATIVE });
+                ecs_set(g_ecs, entity, EntityPosition, { .x = 8.5, .y = 65, .z = 8.5 });
+                ecs_set(g_ecs, entity, EntityRotation, { .yaw = -180.0f, .pitch = 0.0f });
+                ecs_set(g_ecs, entity, PlayerGameMode, { GAME_MODE_CREATIVE });
 
                 // create the player component
-                player_t* player = ecs_get_mut(g_ecs, entity, player_t);
-                player->name = malloc(sizeof(event->name));
-                memcpy(player->name, event->name, sizeof(event->name));
-                player->connection = event->connection;
+                char* name = malloc(sizeof(event->name));
+                memcpy(name, event->name, sizeof(event->name));
+                ecs_set(g_ecs, entity, PlayerConnection, {
+                    .name = name,
+                    .connection = event->connection
+                });
 
                 // set the entity id for the player
-                entity_id_t* id = ecs_get_mut(g_ecs, entity, entity_id_t);
+                EntityUuid* id = ecs_get_mut(g_ecs, entity, EntityUuid);
                 uuid_copy(id->uuid, event->uuid);
 
                 // set the game mode
-                game_mode_t* mode = ecs_get_mut(g_ecs, entity, game_mode_t);
-                *mode = GAME_MODE_CREATIVE;
+                ecs_set(g_ecs, entity, PlayerGameMode, { GAME_MODE_CREATIVE });
 
                 // set the name for easily looking up the player
-                ecs_set_name(g_ecs, entity, player->name);
+                ecs_doc_set_name(g_ecs, entity, name);
 
                 // set the entity for the connection and release it
                 event->connection->entity = entity;
 
                 // send the joined game thing
-                send_join_game(player->connection->fd, entity);
+                send_join_game(event->connection->fd, entity);
             } break;
 
             default:
@@ -141,7 +142,7 @@ static err_t handle_packets() {
             // teleport confirm
             case 0x00: {
                 // make sure there is a teleport request already
-                const player_teleport_t* teleport = ecs_get(g_ecs, packet->entity, player_teleport_t);
+                const PlayerTeleportRequest* teleport = ecs_get(g_ecs, packet->entity, PlayerTeleportRequest);
                 PCHECK(teleport != NULL);
 
                 // parse it
@@ -151,7 +152,7 @@ static err_t handle_packets() {
                 // check that the teleport id is valid, ignore if not
                 // in case there have been multiple requests
                 if (teleport->id == teleport_id) {
-                    ecs_remove(g_ecs, packet->entity, player_teleport_t);
+                    ecs_remove(g_ecs, packet->entity, PlayerTeleportRequest);
                 }
             } break;
 
@@ -177,21 +178,21 @@ static err_t handle_packets() {
                 view_distance = MIN(view_distance, MAX_VIEW_DISTANCE);
 
                 // TODO: save more settings
-                ecs_set(g_ecs, packet->entity, player_view_distance_t, { .view_distance = view_distance });
+                ecs_set(g_ecs, packet->entity, PlayerViewDistance, { .view_distance = view_distance });
 
                 // TODO: make sure this is the first time sent
                 // send the player position, requires to set the teleport id
                 int32_t teleport_id = (int32_t)xoshiro256starstar_next();
-                ecs_set(g_ecs, packet->entity, player_teleport_t, { .id = teleport_id });
-                entity_position_t position = { .x = 8.5, .y = 65, .z = 8.5 };
-                entity_rotation_t rotation = { .yaw = -180.0f, .pitch = 0.0f };
-                send_player_position_and_look(ecs_get(g_ecs, packet->entity, player_t)->connection->fd, teleport_id, position, rotation);
+                ecs_set(g_ecs, packet->entity, PlayerTeleportRequest, { .id = teleport_id });
+                EntityPosition position = { .x = 8.5, .y = 65, .z = 8.5 };
+                EntityRotation rotation = { .yaw = -180.0f, .pitch = 0.0f };
+                send_player_position_and_look(ecs_get(g_ecs, packet->entity, PlayerConnection)->connection->fd, teleport_id, position, rotation);
             } break;
 
             // Player position
             case 0x12: {
                 // ignore if player is teleporting
-                if (ecs_has(g_ecs, packet->entity, player_teleport_t))
+                if (ecs_has(g_ecs, packet->entity, PlayerTeleportRequest))
                     break;
 
                 // TODO: maybe move to a struct?
@@ -203,7 +204,7 @@ static err_t handle_packets() {
                 }* data = (void*)buffer;
                 PCHECK(size == sizeof(*data));
 
-                entity_position_t* position = ecs_get_mut(g_ecs, packet->entity, entity_position_t);
+                EntityPosition* position = ecs_get_mut(g_ecs, packet->entity, EntityPosition);
                 position->x = SWAP64(data->x);
                 position->y = SWAP64(data->feet_y);
                 position->z = SWAP64(data->z);
@@ -212,7 +213,7 @@ static err_t handle_packets() {
             // Player position and rotation
             case 0x13: {
                 // ignore if player is teleporting
-                if (ecs_has(g_ecs, packet->entity, player_teleport_t))
+                if (ecs_has(g_ecs, packet->entity, PlayerTeleportRequest))
                     break;
 
                 // TODO: maybe move to a struct?
@@ -226,12 +227,12 @@ static err_t handle_packets() {
                 }* data = (void*)buffer;
                 PCHECK(size == sizeof(*data));
 
-                entity_position_t* position = ecs_get_mut(g_ecs, packet->entity, entity_position_t);
+                EntityPosition* position = ecs_get_mut(g_ecs, packet->entity, EntityPosition);
                 position->x = SWAP64(data->x);
                 position->y = SWAP64(data->feet_y);
                 position->z = SWAP64(data->z);
 
-                entity_rotation_t* rotation = ecs_get_mut(g_ecs, packet->entity, entity_rotation_t);
+                EntityRotation* rotation = ecs_get_mut(g_ecs, packet->entity, EntityRotation);
                 rotation->yaw = SWAP32(data->yaw);
                 rotation->pitch = SWAP32(data->pitch);
             } break;
@@ -246,7 +247,7 @@ static err_t handle_packets() {
         if (err == ERROR_PROTOCOL_VIOLATION) {
             // if we got a protocol violation queue player for disconnect
             // and continue onwards
-            const player_t* player = ecs_get(g_ecs, packet->entity, player_t);
+            const PlayerConnection* player = ecs_get(g_ecs, packet->entity, PlayerConnection);
             disconnect_connection(player->connection);
         }
         CHECK_AND_RETHROW(err);
@@ -268,10 +269,7 @@ static void handle_generated_chunks() {
         chunk_generated_t* c = mpscq_dequeue(&m_generated_chunk_queue);
 
         // set the chunk
-        TRACE("adding chunk %d.%d to %s",
-              c->chunk->position.x, c->chunk->position.z,
-              ecs_get_name(g_ecs, c->chunk_entity));
-        ecs_set(g_ecs, c->chunk_entity, chunk_data_t, { .chunk = c->chunk });
+        ecs_set(g_ecs, c->chunk_entity, ChunkData, { .chunk = c->chunk });
 
         // poll for it to finish, should be very soon
         while (!sched_task_done(c->task));
@@ -302,8 +300,9 @@ static void finalize_tick(ecs_iter_t* it) {
  * and register on them
  */
 static void player_view_distance_set(ecs_iter_t* it) {
-    player_view_distance_t* distance = ecs_field(it, player_view_distance_t, 1);
-    entity_position_t* position = ecs_field(it, entity_position_t, 2);
+    PlayerViewDistance* distance = ecs_field(it, PlayerViewDistance, 1);
+    EntityPosition* position = ecs_field(it, EntityPosition, 2);
+    PlayerConnection* connection = ecs_field(it, PlayerConnection, 3);
 
     for (int i = 0; i < it->count; i++) {
         chunk_position_t pos = (chunk_position_t){
@@ -316,43 +315,57 @@ static void player_view_distance_set(ecs_iter_t* it) {
             for (int64_t x = -radius; x <= radius; x++) {
                 chunk_position_t p = (chunk_position_t){ .x = pos.x + x, .z = pos.z + z };
                 ecs_entity_t chunk = get_ecs_chunk(p);
-                ecs_add_pair(g_ecs, it->entities[i], entity_chunk, chunk);
 
                 // get the data
-                const chunk_data_t* data = ecs_get(g_ecs, chunk, chunk_data_t);
+                const ChunkData* data = ecs_get(g_ecs, chunk, ChunkData);
                 if (data != NULL) {
+                    // mark that we have the chunk
+                    ecs_add_pair(g_ecs, it->entities[i], PlayerHasChunk, chunk);
+
                     // already has the data, send the chunk
-                    const player_t* player = ecs_get(g_ecs, it->entities[i], player_t);
-                    send_chunk_data(player->connection->fd, data->chunk);
+                    send_chunk_data(connection->connection->fd, data->chunk);
+                } else {
+                    // mark that the player needs this chunk
+                    ecs_add_pair(g_ecs, it->entities[i], PlayerNeedsChunk, chunk);
                 }
             }
         }
     }
 }
 
-static void chunk_data_set(ecs_iter_t* it) {
-    chunk_data_t* data = ecs_field(it, chunk_data_t, 1);
-    player_t* player = ecs_field(it, player_t, 2);
+static void send_ready_chunks(ecs_iter_t* it) {
+    PlayerConnection* connection = ecs_field(it, PlayerConnection, 1);
+    ecs_entity_t chunk = ecs_pair_second(g_ecs, ecs_field_id(it, 2));
+
+    // get the chunk data, if does not have it yet then exit this query
+    const ChunkData* chunkData = ecs_get(g_ecs, chunk, ChunkData);
+    if (chunkData == NULL) {
+        return;
+    }
 
     for (int i = 0; i < it->count; i++) {
-        TRACE("Sending %d.%d to %s",
-              data[i].chunk->position.x,
-              data[i].chunk->position.z,
-              player[i].name);
-        send_chunk_data(player[i].connection->fd, data[i].chunk);
+        // send the chunk data
+        send_chunk_data(connection[i].connection->fd, chunkData->chunk);
+
+        // add the has chunk and remove the needs chunk
+        ecs_add_pair(g_ecs, it->entities[i], PlayerHasChunk, chunk);
+        ecs_remove_pair(g_ecs, it->entities[i], PlayerNeedsChunk, chunk);
     }
 }
 
 static void set_systems() {
     // know when view distance is set for player
-    ECS_OBSERVER(g_ecs, player_view_distance_set, EcsOnSet, player_view_distance_t, [in] entity_position_t);
+    ECS_OBSERVER(g_ecs, player_view_distance_set, EcsOnSet,
+                 [in] PlayerViewDistance, [in] EntityPosition, [in] PlayerConnection);
 
-    // know when chunk data is set on chunk
-    ECS_OBSERVER(g_ecs, chunk_data_set, EcsOnSet, [in] chunk_data_t(up(entity_chunk)), [in] player_t);
+    // mark all the entities that need a chunk and the chunk has it
+    // TODO: group by chunks probably
+    ECS_SYSTEM(g_ecs, send_ready_chunks, EcsOnLoad,
+               [in] PlayerConnection, [in] (PlayerNeedsChunk, *));
 
     // finalize the tick at this moment
-    // TODO: way to force it is actually running at the very very very end
-    ECS_SYSTEM(g_ecs, finalize_tick, EcsOnStore, 0);
+    // this is running post frame, to handle everything that has to be handled
+    ECS_SYSTEM(g_ecs, finalize_tick, EcsPostFrame, 0);
 }
 
 err_t backend_start() {

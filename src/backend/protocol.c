@@ -69,7 +69,7 @@ typedef struct join_game_2 {
 } PACKED join_game_2_t;
 
 void send_join_game(int fd, ecs_entity_t entity) {
-    game_mode_t mode = *ecs_get(g_ecs, entity, game_mode_t);
+    PlayerGameMode mode = *ecs_get(g_ecs, entity, PlayerGameMode);
 
     // we include null terminator in the string size calculation because we need the length,
     // which is short enough to fit in a byte
@@ -261,7 +261,7 @@ typedef struct player_position_and_look {
     uint8_t byte;
 } PACKED player_position_and_look_t;
 
-void send_player_position_and_look(int fd, int32_t teleport_id, entity_position_t position, entity_rotation_t rotation) {
+void send_player_position_and_look(int fd, int32_t teleport_id, EntityPosition position, EntityRotation rotation) {
     uint8_t* data = NULL;
     arrsetcap(data,
               1 + // pid

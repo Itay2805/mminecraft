@@ -15,6 +15,7 @@
     })
 
 #define PACKED __attribute__((packed))
+#define UNUSED __attribute__((unused))
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
 
 #define SWAP64(value) \

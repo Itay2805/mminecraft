@@ -5,32 +5,20 @@
 
 #include <backend/world.h>
 
-/**
- * Represents a base entity component
- *
- * TODO: use EcsPosition3 instead?
- */
-typedef struct entity_position {
+typedef struct {
     double x, y, z;
-} entity_position_t;
-extern ECS_COMPONENT_DECLARE(entity_position_t);
+} EntityPosition;
+extern ECS_COMPONENT_DECLARE(EntityPosition);
 
-typedef struct entity_rotation {
+typedef struct {
     float yaw;
     float pitch;
-} entity_rotation_t;
-extern ECS_COMPONENT_DECLARE(entity_rotation_t);
+} EntityRotation;
+extern ECS_COMPONENT_DECLARE(EntityRotation);
 
-typedef struct entity_velocity {
-    short x, y, z;
-} entity_velocity_t;
-extern ECS_COMPONENT_DECLARE(entity_velocity_t);
-
-typedef struct entity_id {
+typedef struct {
     uuid_t uuid;
-} entity_id_t;
-extern ECS_COMPONENT_DECLARE(entity_id_t);
-
-extern ECS_DECLARE(entity_chunk);
+} EntityUuid;
+extern ECS_COMPONENT_DECLARE(EntityUuid);
 
 void init_entity_ecs();

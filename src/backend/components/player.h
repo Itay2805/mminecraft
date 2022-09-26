@@ -6,38 +6,38 @@
 #include <flecs/flecs.h>
 
 // sets the connection of the player
-typedef struct player {
+typedef struct {
     // the name of the player
     char* name;
 
     // the connection of this player
     connection_t* connection;
-} player_t;
-extern ECS_COMPONENT_DECLARE(player_t);
+} PlayerConnection;
+extern ECS_COMPONENT_DECLARE(PlayerConnection);
 
 // sets the view distance of the player
-typedef struct player_view_distance {
+typedef struct {
     uint8_t view_distance;
-} player_view_distance_t;
-extern ECS_COMPONENT_DECLARE(player_view_distance_t);
+} PlayerViewDistance;
+extern ECS_COMPONENT_DECLARE(PlayerViewDistance);
 
 // the game mode of the player
-typedef enum game_mode {
+typedef enum {
     GAME_MODE_SURVIVAL,
     GAME_MODE_CREATIVE,
     GAME_MODE_ADVENTURE,
     GAME_MODE_SPECTATOR,
-} game_mode_t;
-extern ECS_COMPONENT_DECLARE(game_mode_t);
+} PlayerGameMode;
+extern ECS_COMPONENT_DECLARE(PlayerGameMode);
 
 // marks that the player is waiting for a teleport
 // with the given id
-typedef struct player_teleport {
+typedef struct {
     int32_t id;
-} player_teleport_t;
-extern ECS_COMPONENT_DECLARE(player_teleport_t);
+} PlayerTeleportRequest;
+extern ECS_COMPONENT_DECLARE(PlayerTeleportRequest);
 
-// tags
-extern ECS_DECLARE(players);
+extern ECS_DECLARE(PlayerHasChunk);
+extern ECS_DECLARE(PlayerNeedsChunk);
 
 void init_player_ecs();
