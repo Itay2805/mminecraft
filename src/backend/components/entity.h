@@ -21,4 +21,12 @@ typedef struct {
 } EntityUuid;
 extern ECS_COMPONENT_DECLARE(EntityUuid);
 
+typedef struct {
+    ecs_entity_t chunk;
+} EntityChunk;
+extern ECS_COMPONENT_DECLARE(EntityChunk);
+
+extern ECS_DECLARE(EntityPositionChanged);
+extern ECS_DECLARE(EntityRotationChanged);
+
 void init_entity_ecs();

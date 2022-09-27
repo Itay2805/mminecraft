@@ -6,6 +6,8 @@
 #include "util/mpscq.h"
 #include "util/sched.h"
 #include "util/xoshiro256starstar.h"
+#include "backend/systems/sync.h"
+#include "backend/systems/movement.h"
 
 #include <backend/components/player.h>
 #include <backend/components/entity.h>
@@ -81,11 +83,26 @@ static err_t handle_global_events() {
 
                 // TODO: make sure player does not exists already
 
+                // TODO: load the player from file instead of creating a new one
+
                 // create the entity
                 ecs_entity_t entity = ecs_new_id(g_ecs);
                 ecs_set(g_ecs, entity, EntityPosition, { .x = 8.5, .y = 65, .z = 8.5 });
                 ecs_set(g_ecs, entity, EntityRotation, { .yaw = -180.0f, .pitch = 0.0f });
+                ecs_set(g_ecs, entity, EntityChunk, { .chunk = get_ecs_chunk((ChunkPosition){ .x = 0, .z = 0 }) });
+
+                // set the player props
                 ecs_set(g_ecs, entity, PlayerGameMode, { GAME_MODE_CREATIVE });
+
+                // set the tags
+                ecs_add(g_ecs, entity, EntityPositionChanged);
+                ecs_add(g_ecs, entity, EntityRotationChanged);
+                ecs_set(g_ecs, entity, PlayerPosition, { .x = 8.5, .y = 65, .z = 8.5 });
+
+                // disable all tags for now
+                ecs_enable_component(g_ecs, entity, EntityPositionChanged, false);
+                ecs_enable_component(g_ecs, entity, EntityRotationChanged, false);
+                ecs_enable_component(g_ecs, entity, PlayerPosition, false);
 
                 // create the player component
                 char* name = malloc(sizeof(event->name));
@@ -110,6 +127,14 @@ static err_t handle_global_events() {
 
                 // send the joined game thing
                 send_join_game(event->connection->fd, entity);
+
+                // send the player position, requires to set the teleport id
+                int32_t teleport_id = (int32_t)xoshiro256starstar_next();
+                ecs_set(g_ecs, entity, PlayerTeleportRequest, { .id = teleport_id });
+                EntityPosition position = { .x = 8.5, .y = 65, .z = 8.5 };
+                EntityRotation rotation = { .yaw = -180.0f, .pitch = 0.0f };
+                send_player_position_and_look(event->connection->fd,
+                                              teleport_id, position, rotation);
             } break;
 
             default:
@@ -134,11 +159,21 @@ static err_t handle_packets() {
 
     packet_event_t* packet;
     while ((packet = LIST_ENTRY(list_pop(&q->packes), packet_event_t, entry)) != NULL) {
+
+        // make sure the entity did not disconnect before we were able to
+        // process it's events, this should not have a problem of recycling
+        // because it can only happen on events that happen on the same frame
+        // as the player disconnect
+        if (!ecs_is_alive(g_ecs, packet->entity)) {
+            continue;
+        }
+
         size_t size = packet->size;
         uint8_t* buffer = packet->data;
 
         uint8_t packet_id = *buffer++; size--;
         switch (packet_id) {
+
             // teleport confirm
             case 0x00: {
                 // make sure there is a teleport request already
@@ -179,15 +214,11 @@ static err_t handle_packets() {
 
                 // TODO: save more settings
                 ecs_set(g_ecs, packet->entity, PlayerViewDistance, { .view_distance = view_distance });
-
-                // TODO: make sure this is the first time sent
-                // send the player position, requires to set the teleport id
-                int32_t teleport_id = (int32_t)xoshiro256starstar_next();
-                ecs_set(g_ecs, packet->entity, PlayerTeleportRequest, { .id = teleport_id });
-                EntityPosition position = { .x = 8.5, .y = 65, .z = 8.5 };
-                EntityRotation rotation = { .yaw = -180.0f, .pitch = 0.0f };
-                send_player_position_and_look(ecs_get(g_ecs, packet->entity, PlayerConnection)->connection->fd, teleport_id, position, rotation);
             } break;
+
+            //----------------------------------------------------------------------------------------------------------
+            // Position and rotation packets
+            //----------------------------------------------------------------------------------------------------------
 
             // Player position
             case 0x12: {
@@ -204,7 +235,8 @@ static err_t handle_packets() {
                 }* data = (void*)buffer;
                 PCHECK(size == sizeof(*data));
 
-                EntityPosition* position = ecs_get_mut(g_ecs, packet->entity, EntityPosition);
+                ecs_enable_component(g_ecs, packet->entity, PlayerPosition, true);
+                PlayerPosition* position = ecs_get_mut(g_ecs, packet->entity, PlayerPosition);
                 position->x = SWAP64(data->x);
                 position->y = SWAP64(data->feet_y);
                 position->z = SWAP64(data->z);
@@ -227,18 +259,72 @@ static err_t handle_packets() {
                 }* data = (void*)buffer;
                 PCHECK(size == sizeof(*data));
 
-                EntityPosition* position = ecs_get_mut(g_ecs, packet->entity, EntityPosition);
+                ecs_enable_component(g_ecs, packet->entity, EntityRotationChanged, true);
+                EntityRotation* rotation = ecs_get_mut(g_ecs, packet->entity, EntityRotation);
+                rotation->yaw = SWAP32(data->yaw);
+                rotation->pitch = SWAP32(data->pitch);
+
+                ecs_enable_component(g_ecs, packet->entity, PlayerPosition, true);
+                PlayerPosition* position = ecs_get_mut(g_ecs, packet->entity, PlayerPosition);
                 position->x = SWAP64(data->x);
                 position->y = SWAP64(data->feet_y);
                 position->z = SWAP64(data->z);
+            } break;
+
+            // Player rotation
+            case 0x14: {
+                // ignore if player is teleporting
+                if (ecs_has(g_ecs, packet->entity, PlayerTeleportRequest))
+                    break;
+
+                // TODO: maybe move to a struct?
+                struct __attribute__((packed)) {
+                    float yaw;
+                    float pitch;
+                    bool on_ground;
+                }* data = (void*)buffer;
+                PCHECK(size == sizeof(*data));
 
                 EntityRotation* rotation = ecs_get_mut(g_ecs, packet->entity, EntityRotation);
                 rotation->yaw = SWAP32(data->yaw);
                 rotation->pitch = SWAP32(data->pitch);
+
+                ecs_enable_component(g_ecs, packet->entity, EntityRotationChanged, true);
             } break;
 
+            //----------------------------------------------------------------------------------------------------------
+            // Player abilities
+            //----------------------------------------------------------------------------------------------------------
+
+            case 0x1A: {
+                const PlayerGameMode* gameMode = ecs_get(g_ecs, packet->entity, PlayerGameMode);
+                CHECK(gameMode != NULL);
+
+                PCHECK(size == 1);
+                switch (*buffer) {
+                    // nothing, don't care
+                    case 0x00:
+                        break;
+
+                    // flying, only creative
+                    case 0x02: {
+                        CHECK(*gameMode == GAME_MODE_CREATIVE);
+
+                        // TODO: flying player can break all the rules
+                    } break;
+
+                    // else, don't know
+                    default:
+                        PCHECK(false);
+                }
+            } break;
+
+            //----------------------------------------------------------------------------------------------------------
+            // Unknown packets
+            //----------------------------------------------------------------------------------------------------------
+
             default:
-                TRACE("Entity %llu sent %d bytes of packet %d", packet->entity & ECS_ENTITY_MASK, packet->size, packet_id);
+                TRACE("Entity %llu sent %d bytes of packet %#02x", packet->entity & ECS_ENTITY_MASK, packet->size, packet_id);
                 TRACE_HEX(packet->data, packet->size);
                 break;
         }
@@ -249,6 +335,7 @@ static err_t handle_packets() {
             // and continue onwards
             const PlayerConnection* player = ecs_get(g_ecs, packet->entity, PlayerConnection);
             disconnect_connection(player->connection);
+            err = NO_ERROR;
         }
         CHECK_AND_RETHROW(err);
     }
@@ -285,6 +372,21 @@ static void handle_generated_chunks() {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
+ * Disconnect all players with the needed tags
+ */
+static void disconnect_players(ecs_iter_t* it) {
+    UNUSED DisconnectPlayer* reason = ecs_field(it, DisconnectPlayer, 1);
+    PlayerConnection* players = ecs_field(it, PlayerConnection, 2);
+
+    for (int i = 0; i < it->count; i++) {
+        // TODO: send the reason
+
+        // disconnect
+        disconnect_connection(players[i].connection);
+    }
+}
+
+/**
  * This runs at the end of the tick and makes sure that everything is fully finalized
  */
 static void finalize_tick(ecs_iter_t* it) {
@@ -309,7 +411,7 @@ static void player_view_distance_set(ecs_iter_t* it) {
             .x = (int)position[i].x >> 4,
             .z = (int)position[i].z >> 4
         };
-        int64_t radius = distance[i].view_distance / 2;
+        int64_t radius = DIV_ROUND_UP(distance[i].view_distance, 2);
 
         for (int64_t z = -radius; z <= radius; z++) {
             for (int64_t x = -radius; x <= radius; x++) {
@@ -333,35 +435,30 @@ static void player_view_distance_set(ecs_iter_t* it) {
     }
 }
 
-static void send_ready_chunks(ecs_iter_t* it) {
-    PlayerConnection* connection = ecs_field(it, PlayerConnection, 1);
-    ecs_entity_t chunk = ecs_pair_second(g_ecs, ecs_field_id(it, 2));
-
-    // get the chunk data, if does not have it yet then exit this query
-    const ChunkData* chunkData = ecs_get(g_ecs, chunk, ChunkData);
-    if (chunkData == NULL) {
-        return;
-    }
-
-    for (int i = 0; i < it->count; i++) {
-        // send the chunk data
-        send_chunk_data(connection[i].connection->fd, chunkData->chunk);
-
-        // add the has chunk and remove the needs chunk
-        ecs_add_pair(g_ecs, it->entities[i], PlayerHasChunk, chunk);
-        ecs_remove_pair(g_ecs, it->entities[i], PlayerNeedsChunk, chunk);
-    }
-}
-
+/**
+ * EcsPreFrame      -
+ * EcsOnLoad        -
+ * EcsPostLoad      -
+ * EcsPreUpdate     -
+ * EcsOnUpdate      - Simulate physics, redstone, liquid and so on
+ * EcsOnValidate    - Validate players movement was fine
+ * EcsPostUpdate    -
+ * EcsPreStore      - Actually commit the player positions
+ * EcsOnStore       - Sync chunks, Sync entities (including players)
+ * EcsPostFrame     - finalize stuff in this frame, will submit all the sends at this point
+ */
 static void set_systems() {
     // know when view distance is set for player
     ECS_OBSERVER(g_ecs, player_view_distance_set, EcsOnSet,
                  [in] PlayerViewDistance, [in] EntityPosition, [in] PlayerConnection);
 
-    // mark all the entities that need a chunk and the chunk has it
-    // TODO: group by chunks probably
-    ECS_SYSTEM(g_ecs, send_ready_chunks, EcsOnLoad,
-               [in] PlayerConnection, [in] (PlayerNeedsChunk, *));
+    // setup all the other systems
+    init_sync_systems();
+    init_movement_systems();
+
+    // kick all the players that need to be kicked
+    ECS_SYSTEM(g_ecs, disconnect_players, EcsPostFrame,
+               [in] DisconnectPlayer, [in] PlayerConnection);
 
     // finalize the tick at this moment
     // this is running post frame, to handle everything that has to be handled
@@ -408,6 +505,10 @@ err_t backend_start() {
     ecs_singleton_set(g_ecs, EcsRest, {0});
     ECS_IMPORT(g_ecs, FlecsMonitor);
 
+//    TRACE("Setting flecs logging");
+//    ecs_log_enable_colors(true);
+//    ecs_log_set_level(1);
+
     // setup all the systems
     set_systems();
 
@@ -424,8 +525,15 @@ err_t backend_start() {
         // handle global events that come from the frontend
         CHECK_AND_RETHROW(handle_global_events());
 
-        // handle the packets we got from the player
-        CHECK_AND_RETHROW(handle_packets());
+        // we are going to use a defer to make sure we batch
+        // updates to a single point to make it more cache
+        // friendly
+        ecs_defer_begin(g_ecs);
+        {
+            // handle the packets we got from the player
+            CHECK_AND_RETHROW(handle_packets());
+        }
+        ecs_defer_end(g_ecs);
 
         // Process the world itself
         ecs_progress(g_ecs, 0.0f);

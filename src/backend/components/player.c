@@ -7,6 +7,8 @@ ECS_COMPONENT_DECLARE(PlayerConnection);
 ECS_COMPONENT_DECLARE(PlayerGameMode);
 ECS_COMPONENT_DECLARE(PlayerViewDistance);
 ECS_COMPONENT_DECLARE(PlayerTeleportRequest);
+ECS_COMPONENT_DECLARE(PlayerPosition);
+ECS_COMPONENT_DECLARE(DisconnectPlayer);
 
 ECS_DECLARE(PlayerHasChunk);
 ECS_DECLARE(PlayerNeedsChunk);
@@ -23,6 +25,8 @@ void init_player_ecs() {
     ECS_COMPONENT_DEFINE(g_ecs, PlayerGameMode);
     ECS_COMPONENT_DEFINE(g_ecs, PlayerViewDistance);
     ECS_COMPONENT_DEFINE(g_ecs, PlayerTeleportRequest);
+    ECS_COMPONENT_DEFINE(g_ecs, PlayerPosition);
+    ECS_COMPONENT_DEFINE(g_ecs, DisconnectPlayer);
 
     ECS_TAG_DEFINE(g_ecs, PlayerHasChunk);
     ECS_TAG_DEFINE(g_ecs, PlayerNeedsChunk);
@@ -60,6 +64,15 @@ void init_player_ecs() {
         .entity = ecs_id(PlayerTeleportRequest),
         .members = {
             { .name = "id", .type = ecs_id(ecs_i32_t) },
+        }
+    });
+
+    ecs_struct(g_ecs, {
+        .entity = ecs_id(PlayerPosition),
+        .members = {
+            { .name = "x", .type = ecs_id(ecs_f32_t) },
+            { .name = "y", .type = ecs_id(ecs_f32_t) },
+            { .name = "z", .type = ecs_id(ecs_f32_t) },
         }
     });
 }
