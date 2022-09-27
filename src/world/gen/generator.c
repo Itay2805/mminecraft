@@ -1,33 +1,26 @@
-#include <sys/sysinfo.h>
-#include <bits/stdint-intn.h>
-#include <stdlib.h>
 #include "generator.h"
-#include "util/except.h"
-#include "util/sched.h"
-#include "util/mpscq.h"
-#include "backend/backend.h"
+
+#include <backend/backend.h>
+#include <util/except.h>
+#include <util/mpscq.h>
+
+#include <C-Thread-Pool/thpool.h>
+
+#include <sys/sysinfo.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 /**
  * The scheduler itself
  */
-static struct scheduler m_sched;
-
-/**
- * memory needed for the scheduler
- */
-static void* m_sched_memory;
+static threadpool m_thread_pool = NULL;
 
 err_t init_generator() {
     err_t err = NO_ERROR;
 
-    // start up the scheduler
-    sched_size size = 0;
-    scheduler_init(&m_sched, &size, SCHED_DEFAULT, NULL);
-    m_sched_memory = calloc(size, 1);
-    CHECK_ERRNO(m_sched_memory != NULL);
-
-    scheduler_start(&m_sched, m_sched_memory);
-    TRACE("started world gen, using %d threads", m_sched.threads_num);
+    int thread_num = get_nprocs();
+    m_thread_pool = thpool_init(thread_num);
+    TRACE("started world gen, using %d threads", thread_num);
 
 cleanup:
     return err;
@@ -36,13 +29,14 @@ cleanup:
 typedef struct chunk_gen_task {
     // must be first so we can pass it to the backend
     // for polling and freeing
-    struct sched_task task;
-    world_t* world;
-    ecs_entity_t entity;
+    chunk_generated_t event;
+
+    // data we need for the task
     chunk_position_t position;
+    world_t* world;
 } chunk_gen_task_t;
 
-static void do_chunk_gen(void* arg, struct scheduler* s, struct sched_task_partition p, sched_uint thread_num) {
+static void do_chunk_gen(void* arg) {
     chunk_gen_task_t* gen = arg;
 
     // do the generation
@@ -61,20 +55,21 @@ static void do_chunk_gen(void* arg, struct scheduler* s, struct sched_task_parti
     world_set_chunk(&g_overworld, chunk);
 
     // create the new event
-    chunk_generated_t* event = malloc(sizeof(chunk_generated_t));
-    event->task = &gen->task;
-    event->chunk = chunk;
-    event->chunk_entity = gen->entity;
+    gen->event.chunk = chunk;
 
     // try to add it
-    while (!mpscq_enqueue(&m_generated_chunk_queue, event));
+    while (!mpscq_enqueue(&m_generated_chunk_queue, gen)) {
+        while (mpscq_capacity(&m_generated_chunk_queue) - mpscq_count(&m_generated_chunk_queue) == 0) {
+            sched_yield();
+        }
+    }
 }
 
 void generator_queue(world_t* world, chunk_position_t position, ecs_entity_t entity) {
     chunk_gen_task_t* task = malloc(sizeof(chunk_gen_task_t));
     task->world = world;
     task->position = position;
-    task->entity = entity;
+    task->event.chunk_entity = entity;
 
-    scheduler_add(&m_sched, &task->task, do_chunk_gen, task, 1, 1);
+    thpool_add_work(m_thread_pool, do_chunk_gen, task);
 }

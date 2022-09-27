@@ -4,3 +4,6 @@
 [submodule "lib/flecs"]
 	path = lib/flecs
 	url = git@github.com:SanderMertens/flecs.git
+[submodule "lib/C-Thread-Pool"]
+	path = lib/C-Thread-Pool
+	url = git@github.com:Pithikos/C-Thread-Pool.git

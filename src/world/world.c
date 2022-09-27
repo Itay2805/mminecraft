@@ -165,20 +165,14 @@ chunk_t* put_chunk(chunk_t* chunk) {
 void release_chunk(chunk_t* chunk) {
 //    if (atomic_fetch_sub(&chunk->ref_count, 1) == 1) {
         // we can free this chunk
-        for (int i = 0; i < 16; i++) {
-            free(chunk->light_sections[i]);
-            if (chunk->sections[i] != NULL) {
-                hmfree(chunk->sections[i]->palette->lookup);
-                free(chunk->sections[i]->palette);
-                free(chunk->sections[i]);
-            }
-        }
 //    }
 }
 
 chunk_t* world_get_chunk(world_t* world, chunk_position_t position) {
+    ptrdiff_t temp = 0;
+
     pthread_rwlock_rdlock(&world->chunks_lock);
-    int idx = hmgeti(world->chunks, position);
+    int idx = hmgeti_ts(world->chunks, position, temp);
     chunk_t* chunk = idx >= 0 ? world->chunks[idx].value : NULL;
     pthread_rwlock_unlock(&world->chunks_lock);
     return chunk;

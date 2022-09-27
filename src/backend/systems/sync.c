@@ -24,6 +24,9 @@ static void sync_chunks(ecs_iter_t* it) {
         // send the chunk data
         send_chunk_data(connection[i].connection->fd, chunkData->chunk);
 
+        // send the light data
+        send_full_update_light(connection[i].connection->fd, chunkData->chunk);
+
         // add the has chunk and remove the needs chunk
         ecs_add_pair(g_ecs, it->entities[i], PlayerHasChunk, chunk);
         ecs_remove_pair(g_ecs, it->entities[i], PlayerNeedsChunk, chunk);

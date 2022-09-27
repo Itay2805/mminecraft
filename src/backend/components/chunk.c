@@ -36,12 +36,18 @@ static struct {
     ecs_entity_t value;
 }* m_chunk_entities = NULL;
 
+static pthread_rwlock_t m_chunk_entities_lock = PTHREAD_RWLOCK_INITIALIZER;
+
 ecs_entity_t get_ecs_chunk(chunk_position_t position) {
     // TODO: support dimensions
+    ptrdiff_t temp = 0;
 
     // does not exists, get it from the world instance
-    int idx = hmgeti(m_chunk_entities, position);
+    pthread_rwlock_rdlock(&m_chunk_entities_lock);
+    int idx = hmgeti_ts(m_chunk_entities, position, temp);
     if (idx < 0) {
+        pthread_rwlock_unlock(&m_chunk_entities_lock);
+
         ecs_entity_t entity = ecs_new_id(g_ecs);
         ecs_add_pair(g_ecs, entity, EcsChildOf, chunks);
         ecs_set(g_ecs, entity, ChunkPosition, { .x = position.x, .z = position.z });
@@ -52,7 +58,9 @@ ecs_entity_t get_ecs_chunk(chunk_position_t position) {
         ecs_doc_set_name(g_ecs, entity, buffer);
 
         // store it
+        pthread_rwlock_wrlock(&m_chunk_entities_lock);
         hmput(m_chunk_entities, position, entity);
+        pthread_rwlock_unlock(&m_chunk_entities_lock);
 
         // store the chunk along side if needed
         chunk_t* chunk = world_get_chunk(&g_overworld, position);
@@ -67,6 +75,9 @@ ecs_entity_t get_ecs_chunk(chunk_position_t position) {
 
         return entity;
     } else {
-        return m_chunk_entities[idx].value;
+        ecs_entity_t entity = m_chunk_entities[idx].value;
+        pthread_rwlock_unlock(&m_chunk_entities_lock);
+
+        return entity;
     }
 }

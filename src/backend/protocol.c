@@ -47,8 +47,6 @@ static void fake_varint(uint8_t* data, int32_t value, int count) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Join Game
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct join_game_1 {
     int entity_id;
@@ -155,8 +153,6 @@ void send_join_game(int fd, ecs_entity_t entity) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Join Game
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct chunk_data_1 {
     int chunk_x;
@@ -176,8 +172,8 @@ void send_chunk_data(int fd, chunk_t* chunk) {
 
     // the first chunk of data
     chunk_data_1_t* chunk_data_1 = (chunk_data_1_t*)arraddnptr(data, sizeof(chunk_data_1_t));
-    chunk_data_1->chunk_x = SWAP32(chunk->position.x);
-    chunk_data_1->chunk_z = SWAP32(chunk->position.z);
+    chunk_data_1->chunk_x = SWAP32((int32_t)chunk->position.x);
+    chunk_data_1->chunk_z = SWAP32((int32_t)chunk->position.z);
     chunk_data_1->full_chunk = true;
 
     // write the primary bitmask
@@ -249,7 +245,81 @@ void send_chunk_data(int fd, chunk_t* chunk) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Player position and look
+
+void send_full_update_light(int fd, chunk_t* chunk) {
+    uint8_t* data = NULL;
+    arrsetcap(data,
+              1 + // pid
+              5 + 5 + 1 + 5 * 4);
+
+    // push the id
+    arrpush(data, 0x23);
+    data = write_varint(data, chunk->position.x);
+    data = write_varint(data, chunk->position.z);
+    arrpush(data, true); // trust edges
+
+    // calculate the masks
+    int32_t sky_light_mask = 0;
+    int32_t block_light_mask = 0;
+    for (int i = 0; i < 18; i++) {
+        if (chunk->sky_light_sections[i] != NULL) sky_light_mask |= 1 << i;
+        if (chunk->block_light_sections[i] != NULL) sky_light_mask |= 1 << i;
+    }
+    data = write_varint(data, sky_light_mask);
+    data = write_varint(data, block_light_mask);
+
+    // the empty masks are exact opposite for full light updates
+    data = write_varint(data, (~sky_light_mask) & ((1 << 18) - 1));
+    data = write_varint(data, (~block_light_mask) & ((1 << 18) - 1));
+
+    // sky light
+    for (int i = 0; i < 18; i++) {
+        section_light_t* section = chunk->sky_light_sections[i];
+        if (section == NULL)
+            continue;
+
+        data = write_varint(data, sizeof(section->light));
+        memcpy(arraddnptr(data, sizeof(section->light)), section->light, sizeof(section->light));
+    }
+
+    // block light
+    for (int i = 0; i < 18; i++) {
+        section_light_t* section = chunk->block_light_sections[i];
+        if (section == NULL)
+            continue;
+
+        data = write_varint(data, sizeof(section->light));
+        memcpy(arraddnptr(data, sizeof(section->light)), section->light, sizeof(section->light));
+    }
+
+    // send it
+    backend_sender_send(fd, data, arrlen(data), do_arrfree);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+typedef struct unload_chunk {
+    int chunk_x;
+    int chunk_z;
+} PACKED unload_chunk_t;
+
+void send_unload_chunk(int fd, chunk_position_t position) {
+    uint8_t* data = NULL;
+    arrsetcap(data,
+              1 + // pid
+              sizeof(unload_chunk_t));
+
+    // push the id
+    arrpush(data, 0x1C);
+
+    unload_chunk_t* pos = (unload_chunk_t*)arraddnptr(data, sizeof(unload_chunk_t));
+    pos->chunk_x = SWAP32(position.x);
+    pos->chunk_z = SWAP32(position.z);
+
+    // send it
+    backend_sender_send(fd, data, arrlen(data), do_arrfree);
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct player_position_and_look {
@@ -281,6 +351,39 @@ void send_player_position_and_look(int fd, int32_t teleport_id, EntityPosition p
     pos->byte = 0;
 
     data = write_varint(data, teleport_id);
+
+    // send it
+    backend_sender_send(fd, data, arrlen(data), do_arrfree);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+typedef struct keep_alive {
+    uint8_t pid;
+    uint64_t keep_alive_id;
+} PACKED keep_alive_t;
+
+void send_keep_alive(int fd, uint64_t keep_alive) {
+    keep_alive_t* data = calloc(1, sizeof(keep_alive_t));
+    data->pid = 0x1F;
+    data->keep_alive_id = keep_alive;
+
+    // send it
+    backend_sender_send(fd, data, sizeof(*data), free);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void send_update_view_position(int fd, chunk_position_t position) {
+    uint8_t* data = NULL;
+    arrsetcap(data,
+          1 + // pid
+          5 + 5);
+
+    // push the id
+    arrpush(data, 0x40);
+    data = write_varint(data, position.x);
+    data = write_varint(data, position.z);
 
     // send it
     backend_sender_send(fd, data, arrlen(data), do_arrfree);

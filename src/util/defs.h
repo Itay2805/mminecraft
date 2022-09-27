@@ -1,5 +1,7 @@
 #pragma once
 
+#define ABS(x) (((x)<0)?(0-(x)):(x))
+
 #define MIN(a, b) \
     ({ \
         __typeof__(a) __a = a; \
@@ -17,27 +19,37 @@
 #define PACKED __attribute__((packed))
 #define UNUSED __attribute__((unused))
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
+#define DIV_ROUND_DOWN(a, b) ((a) / (b) - ((a) % (b) < 0))
 
 #define SWAP64(value) \
     ({ \
-        __typeof__(value) __value = value; \
-        _Static_assert(sizeof(value) == 8, "invalid SWAP64 type"); \
-        uint64_t __beval = __builtin_bswap64(*(uint64_t*)&__value); \
-        *(__typeof__(value)*)&__beval; \
+        union {       \
+            __typeof__(value) __value; \
+            uint64_t __bits_value; \
+        } u = { .__value = value };              \
+        _Static_assert(sizeof(value) == sizeof(uint64_t), "invalid SWAP64 type"); \
+        u.__bits_value = __builtin_bswap64(u.__bits_value); \
+        u.__value; \
     })
 
 #define SWAP32(value) \
     ({ \
-        __typeof__(value) __value = value; \
-        _Static_assert(sizeof(value) == 4, "invalid SWAP32 type"); \
-        uint32_t __beval = __builtin_bswap32(*(uint32_t*)&__value); \
-        *(__typeof__(value)*)&__beval; \
+        union {       \
+            __typeof__(value) __value; \
+            uint32_t __bits_value; \
+        } u = { .__value = value };              \
+        _Static_assert(sizeof(value) == sizeof(uint32_t), "invalid SWAP32 type"); \
+        u.__bits_value = __builtin_bswap32(u.__bits_value); \
+        u.__value; \
     })
 
 #define SWAP16(value) \
     ({ \
-        __typeof__(value) __value = value; \
-        _Static_assert(sizeof(value) == 2, "invalid SWAP16 type"); \
-        uint16_t __beval = __builtin_bswap16(*(uint16_t*)&__value); \
-        *(__typeof__(value)*)&__beval; \
+        union {       \
+            __typeof__(value) __value; \
+            uint16_t __bits_value; \
+        } u = { .__value = value };              \
+        _Static_assert(sizeof(value) == sizeof(uint16_t), "invalid SWAP16 type"); \
+        u.__bits_value = __builtin_bswap16(u.__bits_value); \
+        u.__value; \
     })

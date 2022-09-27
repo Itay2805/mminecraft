@@ -19,4 +19,4 @@ typedef void (*sender_sent_callback_t)(void* buffer);
 /**
  * Sends packets from the backend, this is synchronized properly
  */
-err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size, sender_sent_callback_t callback);
+err_t backend_sender_send(int fd, void* buffer, int32_t size, sender_sent_callback_t callback);

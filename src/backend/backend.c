@@ -4,10 +4,10 @@
 #include "sender.h"
 #include "world.h"
 #include "util/mpscq.h"
-#include "util/sched.h"
 #include "util/xoshiro256starstar.h"
 #include "backend/systems/sync.h"
 #include "backend/systems/movement.h"
+#include "backend/util/view_distance.h"
 
 #include <backend/components/player.h>
 #include <backend/components/entity.h>
@@ -131,10 +131,14 @@ static err_t handle_global_events() {
                 // send the player position, requires to set the teleport id
                 int32_t teleport_id = (int32_t)xoshiro256starstar_next();
                 ecs_set(g_ecs, entity, PlayerTeleportRequest, { .id = teleport_id });
-                EntityPosition position = { .x = 8.5, .y = 65, .z = 8.5 };
+                EntityPosition position = { .x = 8.5, .y = 5, .z = 8.5 };
                 EntityRotation rotation = { .yaw = -180.0f, .pitch = 0.0f };
                 send_player_position_and_look(event->connection->fd,
                                               teleport_id, position, rotation);
+
+                // send the view position update
+                send_update_view_position(event->connection->fd,
+                                          (chunk_position_t){ .x = 0, .z = 0 });
             } break;
 
             default:
@@ -358,11 +362,7 @@ static void handle_generated_chunks() {
         // set the chunk
         ecs_set(g_ecs, c->chunk_entity, ChunkData, { .chunk = c->chunk });
 
-        // poll for it to finish, should be very soon
-        while (!sched_task_done(c->task));
-
-        // free the task and the
-        free(c->task);
+        // free request
         free(c);
     }
 }
@@ -400,37 +400,29 @@ static void finalize_tick(ecs_iter_t* it) {
 /**
  * Whenever the view distance is set we are going to re-calculate which chunks the player needs
  * and register on them
+ *
+ * TODO: right now this can cause spurious chunks to be sent but whatever
  */
 static void player_view_distance_set(ecs_iter_t* it) {
     PlayerViewDistance* distance = ecs_field(it, PlayerViewDistance, 1);
-    EntityPosition* position = ecs_field(it, EntityPosition, 2);
-    PlayerConnection* connection = ecs_field(it, PlayerConnection, 3);
+    EntityPosition* positions = ecs_field(it, EntityPosition, 2);
 
     for (int i = 0; i < it->count; i++) {
-        chunk_position_t pos = (chunk_position_t){
-            .x = (int)position[i].x >> 4,
-            .z = (int)position[i].z >> 4
-        };
-        int64_t radius = DIV_ROUND_UP(distance[i].view_distance, 2);
+        chunk_view_distance_t chunk_pos = chunk_view_distance_from_position(positions[i].x, positions[i].z, distance[i].view_distance);
 
-        for (int64_t z = -radius; z <= radius; z++) {
-            for (int64_t x = -radius; x <= radius; x++) {
-                chunk_position_t p = (chunk_position_t){ .x = pos.x + x, .z = pos.z + z };
-                ecs_entity_t chunk = get_ecs_chunk(p);
-
-                // get the data
-                const ChunkData* data = ecs_get(g_ecs, chunk, ChunkData);
-                if (data != NULL) {
-                    // mark that we have the chunk
-                    ecs_add_pair(g_ecs, it->entities[i], PlayerHasChunk, chunk);
-
-                    // already has the data, send the chunk
-                    send_chunk_data(connection->connection->fd, data->chunk);
-                } else {
-                    // mark that the player needs this chunk
+        TRACE("map:");
+        for (int32_t x = chunk_pos.x - chunk_pos.size; x <= chunk_pos.x + chunk_pos.size; x++) {
+            for (int32_t z = chunk_pos.z - chunk_pos.size; z <= chunk_pos.z + chunk_pos.size; z++) {
+                if (chunk_in_view_distance(chunk_pos, x, z)) {
+                    UNUSED ecs_entity_t chunk = get_ecs_chunk((chunk_position_t) {.x = x, .z = z});
                     ecs_add_pair(g_ecs, it->entities[i], PlayerNeedsChunk, chunk);
+                    printf(" I");
+                } else {
+                    printf(" +");
                 }
             }
+
+            printf("\n");
         }
     }
 }
@@ -450,7 +442,7 @@ static void player_view_distance_set(ecs_iter_t* it) {
 static void set_systems() {
     // know when view distance is set for player
     ECS_OBSERVER(g_ecs, player_view_distance_set, EcsOnSet,
-                 [in] PlayerViewDistance, [in] EntityPosition, [in] PlayerConnection);
+                 [in] PlayerViewDistance, [in] EntityPosition);
 
     // setup all the other systems
     init_sync_systems();
@@ -463,6 +455,18 @@ static void set_systems() {
     // finalize the tick at this moment
     // this is running post frame, to handle everything that has to be handled
     ECS_SYSTEM(g_ecs, finalize_tick, EcsPostFrame, 0);
+}
+
+/**
+ * Query to get all players
+ */
+static ecs_query_t* m_players_connections = NULL;
+
+static void set_queries() {
+    // iterate all player connections
+    m_players_connections = ecs_query(g_ecs, {
+        .filter.expr = "[in] PlayerConnection"
+    });
 }
 
 err_t backend_start() {
@@ -505,16 +509,18 @@ err_t backend_start() {
     ecs_singleton_set(g_ecs, EcsRest, {0});
     ECS_IMPORT(g_ecs, FlecsMonitor);
 
-//    TRACE("Setting flecs logging");
-//    ecs_log_enable_colors(true);
-//    ecs_log_set_level(1);
+    TRACE("Setting flecs logging");
+    ecs_log_enable_colors(true);
+    ecs_log_set_level(0);
 
     // setup all the systems
     set_systems();
+    set_queries();
 
     // setup the world
     CHECK_AND_RETHROW(init_world());
 
+    time_t last_keepalive = time(NULL);
     while (1) {
         // switch the queues
         global_queues_switch();
@@ -537,6 +543,27 @@ err_t backend_start() {
 
         // Process the world itself
         ecs_progress(g_ecs, 0.0f);
+
+        // handle keep alives
+        // TODO: move to an ecs timer based thing
+        time_t now = time(NULL);
+        if (now - last_keepalive >= 10) {
+
+            ecs_iter_t it = ecs_query_iter(g_ecs, m_players_connections);
+            while (ecs_query_next(&it)) {
+                const PlayerConnection* connection = ecs_field(&it, PlayerConnection, 1);
+
+                for (int i = 0; i < it.count; i ++) {
+                    uint64_t keep_alive_id = xoshiro256starstar_next();
+                    send_keep_alive(connection[i].connection->fd, keep_alive_id);
+
+                    // TODO: track this, if by the next time we try to keep alive he did not answer
+                    //       just kick the player
+                }
+            }
+
+            last_keepalive = now;
+        }
     }
 
 cleanup:

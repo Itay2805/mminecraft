@@ -36,6 +36,7 @@ CFLAGS		+= -static -fshort-wchar
 CFLAGS 		+= -Ilib -Isrc -I$(BUILD_DIR)
 
 SRCS 		:= $(shell find src -name '*.c')
+SRCS 		+= lib/C-Thread-Pool/thpool.c
 
 MCDATA_BASE	:= minecraft-data/data/pc
 MCDATA_VER	:= 1.16.2
@@ -53,7 +54,7 @@ SRCS		+= lib/flecs/flecs.c
 # Targets
 ########################################################################################################################
 
-LDFLAGS		:= $(CFLAGS) -luring -ljson-c -luuid
+LDFLAGS		:= $(CFLAGS) -luring -ljson-c -luuid -lm
 
 all: $(BIN_DIR)/mminecraft.elf
 

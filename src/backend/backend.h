@@ -92,11 +92,6 @@ typedef struct chunk_generated {
 
     // the newly generated chunk
     chunk_t* chunk;
-
-    // the sched task, that needs to be deleted, not
-    // that you should wait for zero ref count before
-    // actually trying to free it
-    struct sched_task* task;
 } chunk_generated_t;
 
 /**

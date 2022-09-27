@@ -86,7 +86,7 @@ void backend_sender_submit() {
         __sqe; \
     })
 
-err_t backend_sender_send(int fd, uint8_t* buffer, int32_t size, sender_sent_callback_t callback) {
+err_t backend_sender_send(int fd, void* buffer, int32_t size, sender_sent_callback_t callback) {
     err_t err = NO_ERROR;
 
     // set a place for this

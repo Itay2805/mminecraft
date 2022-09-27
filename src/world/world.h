@@ -82,11 +82,8 @@ void section_calc_block_count(section_t* section);
 uint8_t* section_write_compact(section_t* section, uint8_t* data);
 
 typedef struct section_light {
-    // the block light of the section
-    uint8_t block_light[16 * 16 * 16];
-
-    // the sky light of the section
-    uint16_t sky_light[16 * 16 * 16];
+    // the block light of the section, nibble array
+    uint8_t light[(16 * 16 * 16) / 2];
 } section_light_t;
 
 typedef struct chunk {
@@ -98,7 +95,8 @@ typedef struct chunk {
 
     // the light sections, used to save space on areas
     // without any blocks but that do have light data
-    section_light_t* light_sections[16];
+    section_light_t* block_light_sections[18];
+    section_light_t* sky_light_sections[18];
 } chunk_t;
 
 chunk_t* put_chunk(chunk_t* chunk);
