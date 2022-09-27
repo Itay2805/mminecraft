@@ -61,7 +61,7 @@ static void sync_entities(ecs_iter_t* it) {
         ecs_iter_t sit = ecs_rule_iter(g_ecs, m_players_in_chunk);
         ecs_iter_set_var(&sit, m_players_in_chunk_var, chunk->chunk);
         while (ecs_rule_next(&sit)) {
-            PlayerConnection* connection = ecs_field(&sit, PlayerConnection, 2);
+            UNUSED PlayerConnection* connection = ecs_field(&sit, PlayerConnection, 2);
             for (int j = 0; j < sit.count; j++) {
                 // don't send to self
                 if (it->entities[j] == sit.entities[j]) {
