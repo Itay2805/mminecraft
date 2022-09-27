@@ -203,7 +203,7 @@ void send_chunk_data(int fd, chunk_t* chunk) {
     uint8_t* biomes = arraddnptr(data, 1024);
     memset(biomes, 127, 1024);
 
-    uint8_t* size_placeholder = arraddnptr(data, 4);
+    int32_t size_placeholder = arraddnindex(data, 4);
     int32_t sections_start = arrlen(data);
 
     // send all the sections
@@ -238,7 +238,7 @@ void send_chunk_data(int fd, chunk_t* chunk) {
     }
 
     // set the length and the primary bit mask
-    fake_varint(size_placeholder, arrlen(data) - sections_start, 4);
+    fake_varint(data + size_placeholder, arrlen(data) - sections_start, 4);
 
     // block entities
     // TODO: this
